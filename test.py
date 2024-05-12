@@ -15,6 +15,7 @@ class ZoneRecoveryBot(EWrapper, EClient):
         self.entry_rsi_low = 30
         self.entry_rsi_high = 70
         self.historical_data = []  # To store historical close prices for RSI calculation
+        self.profit_target = 0.05  # 5% profit target
 
     def error(self, reqId, errorCode, errorString, extraInfo):
         print("Error:", reqId, errorCode, errorString, extraInfo)
@@ -64,10 +65,27 @@ class ZoneRecoveryBot(EWrapper, EClient):
 
     def realTimeBar(self, reqId, time, open, high, low, close, volume, wap, count):
         print(f"Real-time bar data: Close price = {close}")
+        if self.initial_order_filled:
+            self.check_profit_take(close)
         self.historical_data.append(close)
         self.historical_data = self.historical_data[-self.rsi_period:]  # keep only the necessary data
         self.calculate_rsi()
         self.check_zones_and_trade(close)
+
+    def check_profit_take(self, current_price):
+        if self.entry_price is not None:
+            profit = (current_price - self.entry_price) / self.entry_price
+            if profit >= self.profit_target:
+                print(f"Profit target reached with {profit*100:.2f}% gain. Selling position.")
+                self.close_position(current_price)
+
+    def close_position(self, current_price):
+        contract = self.create_contract("TSLY", "STK", "SMART", "USD")
+        order = self.create_order("SELL", 1, "MKT")  # Assuming a long position of 1 unit
+        self.placeOrder(self.nextOrderId, contract, order)
+        self.nextOrderId += 1
+        self.initial_order_filled = False  # Reset for the next trading cycle
+        print("Position closed at price:", current_price)
 
     def check_zones_and_trade(self, current_price):
         if not self.initial_order_filled:
