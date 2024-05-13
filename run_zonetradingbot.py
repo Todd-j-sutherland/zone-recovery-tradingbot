@@ -20,6 +20,7 @@ class ZoneRecoveryBot(EWrapper, EClient):
         self.running = True
         self.stocks_to_check = self.load_and_update_metadata(tickers)
         self.logic = ZoneRecoveryLogic(self.stocks_to_check.copy())
+        self.nextValidOrderId = 1
 
     def load_and_update_metadata(self, tickers):
         """ Load and update stock metadata from a file based on provided tickers and scanned stocks. """
@@ -75,12 +76,14 @@ class ZoneRecoveryBot(EWrapper, EClient):
                     if price and (not self.stocks_to_check[stock]['timestamps'] or timestamp != self.stocks_to_check[stock]['timestamps'][-1]):
                         self.stocks_to_check[stock]['prices'].append(price)
                         self.stocks_to_check[stock]['timestamps'].append(timestamp)
+                        self.stocks_to_check[stock]['prices'].pop()
+                        self.stocks_to_check[stock]['timestamps'].pop()
                         self.save_metadata(self.stocks_to_check)
                         result = self.logic.update_price(stock, price)
                         if result:
                             trade_type, current_price = result
                             print(result)
-                            # self.trigger_trade(stock, trade_type, 1, current_price)
+                            self.trigger_trade(stock, trade_type, 1, current_price)
                 time.sleep(self.data_update_interval)
             except KeyboardInterrupt:
                 self.stop()
@@ -88,10 +91,12 @@ class ZoneRecoveryBot(EWrapper, EClient):
                 logging.error(f"An error occurred: {e}")
 
     def trigger_trade(self, symbol, trade_type, quantity, current_price):
+        super().nextValidId(self.nextValidOrderId)
+        print("NextValidId:", self.nextValidOrderId)
         contract = self.create_contract(symbol)
         order = self.create_order(trade_type, quantity, current_price)
-        self.placeOrder(self.nextOrderId, contract, order)
-        self.nextOrderId += 1
+        self.placeOrder(self.nextValidOrderId, contract, order)
+        self.nextValidOrderId = self.nextValidOrderId + 1
 
     def create_contract(self, symbol):
         contract = Contract()

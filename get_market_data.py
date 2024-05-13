@@ -23,7 +23,7 @@ class GetMarketData:
             logging.error(f"API request error: {e}")
             return {}
 
-    def _get_params(self, function, symbol=None, interval=None, outputsize=None):
+    def _get_params(self, function, symbol=None, interval=None, outputsize=None, entitlement=None):
         """Generate parameters dictionary for API requests."""
         params = {"function": function}
         if symbol:
@@ -32,17 +32,19 @@ class GetMarketData:
             params["interval"] = interval
         if outputsize:
             params["outputsize"] = outputsize
+        if entitlement:
+            params["entitlement"] = entitlement
         return params
 
     def fetch_intraday_data(self, symbol, interval="1min"):
         """Fetch the latest intraday data."""
-        params = self._get_params("TIME_SERIES_INTRADAY", symbol, interval, "compact")
+        params = self._get_params("TIME_SERIES_INTRADAY", symbol, interval, "compact", "realtime")
         data = self._make_api_request(params)
         return {time: float(info['4. close']) for time, info in data.get("Time Series (1min)", {}).items()}
 
     def fetch_initial_data(self, symbol, interval="1min", period=30):
         """Fetch the initial set of data for RSI calculation including timestamps."""
-        params = self._get_params("TIME_SERIES_INTRADAY", symbol, interval, "full")
+        params = self._get_params("TIME_SERIES_INTRADAY", symbol, interval, "full", "realtime")
         data = self._make_api_request(params)
         time_series = data.get("Time Series (1min)", {})
         sorted_times = sorted(time_series.keys())[-period:]  # Get the last `period` minutes
@@ -52,7 +54,7 @@ class GetMarketData:
 
     def fetch_latest_price(self, symbol, interval="1min"):
         """Fetch the most recent price for the specified stock symbol along with its timestamp."""
-        params = self._get_params("TIME_SERIES_INTRADAY", symbol, interval, "compact")
+        params = self._get_params("TIME_SERIES_INTRADAY", symbol, interval, "compact", "realtime")
         data = self._make_api_request(params)
         time_series = data.get("Time Series (1min)", {})
         latest_time = max(time_series.keys(), default=None)
