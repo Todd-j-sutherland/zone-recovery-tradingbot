@@ -22,7 +22,7 @@ class ZoneRecoveryBot(EWrapper, EClient):
         self.logic = ZoneRecoveryLogic(self.stocks_to_check.copy())
 
     def load_and_update_metadata(self, tickers):
-        """ Load and update stock metadata from a file based on provided tickers. """
+        """ Load and update stock metadata from a file based on provided tickers and scanned stocks. """
         if os.path.exists(self.metadata_file):
             try:
                 with open(self.metadata_file, 'r') as file:
@@ -33,8 +33,12 @@ class ZoneRecoveryBot(EWrapper, EClient):
         else:
             stocks_data = {}
 
-        # Update the metadata to reflect only the tickers provided
-        updated_stocks_data = {ticker: stocks_data.get(ticker, {"fetched": False, "prices": []}) for ticker in tickers}
+        # Get stocks from scanner and merge with manually added tickers
+        scanned_stocks = self.market_data_service.filter_stocks_by_price()
+        combined_tickers = tickers + [stock for stock in scanned_stocks if stock not in tickers]
+
+        # Update the metadata to reflect the combined list of tickers
+        updated_stocks_data = {ticker: stocks_data.get(ticker, {"fetched": False, "prices": []}) for ticker in combined_tickers}
         self.save_metadata(updated_stocks_data)
         return updated_stocks_data
 
@@ -68,21 +72,20 @@ class ZoneRecoveryBot(EWrapper, EClient):
                         self.save_metadata(self.stocks_to_check)
                     # Continue to fetch latest price and update
                     price, timestamp = self.market_data_service.fetch_latest_price(stock, "1min")
-                    if price and (timestamp != self.stocks_to_check[stock]['timestamps'][-1]):
+                    if price and (not self.stocks_to_check[stock]['timestamps'] or timestamp != self.stocks_to_check[stock]['timestamps'][-1]):
                         self.stocks_to_check[stock]['prices'].append(price)
                         self.stocks_to_check[stock]['timestamps'].append(timestamp)
                         self.save_metadata(self.stocks_to_check)
                         result = self.logic.update_price(stock, price)
                         if result:
                             trade_type, current_price = result
-                            self.trigger_trade(stock, trade_type, 1, current_price)
+                            print(result)
+                            # self.trigger_trade(stock, trade_type, 1, current_price)
                 time.sleep(self.data_update_interval)
             except KeyboardInterrupt:
                 self.stop()
             except Exception as e:
                 logging.error(f"An error occurred: {e}")
-
-
 
     def trigger_trade(self, symbol, trade_type, quantity, current_price):
         contract = self.create_contract(symbol)
