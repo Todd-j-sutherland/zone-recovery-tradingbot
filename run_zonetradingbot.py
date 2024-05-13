@@ -24,8 +24,12 @@ class ZoneRecoveryBot(EWrapper, EClient):
     def load_and_update_metadata(self, tickers):
         """ Load and update stock metadata from a file based on provided tickers. """
         if os.path.exists(self.metadata_file):
-            with open(self.metadata_file, 'r') as file:
-                stocks_data = json.load(file)
+            try:
+                with open(self.metadata_file, 'r') as file:
+                    stocks_data = json.load(file)
+            except json.JSONDecodeError:
+                logging.error("JSON file is empty or corrupt. Initializing with an empty dictionary.")
+                stocks_data = {}
         else:
             stocks_data = {}
 
@@ -55,16 +59,19 @@ class ZoneRecoveryBot(EWrapper, EClient):
             try:
                 for stock, info in self.stocks_to_check.items():
                     if not info["fetched"]:
-                        # Fetch initial data
-                        data = self.market_data_service.fetch_initial_data(stock, "1min", 30)
-                        self.stocks_to_check[stock]["prices"].extend(data)
+                        # Fetch initial data including timestamps
+                        initial_data = self.market_data_service.fetch_initial_data(stock, "1min", 30)
+                        # Update the price list and mark as fetched
+                        self.stocks_to_check[stock]["prices"].extend([price for price, _ in initial_data])
+                        self.stocks_to_check[stock]["timestamps"] = [time for _, time in initial_data]
                         self.stocks_to_check[stock]["fetched"] = True
-                        self.save_metadata(self.stocks_to_check)  # Corrected call
-                    # Fetch latest price and update periodically
-                    price = self.market_data_service.fetch_latest_price(stock, "1min")
-                    if price:
-                        self.stocks_to_check[stock]["prices"].append(price)
-                        self.save_metadata(self.stocks_to_check)  # Corrected call
+                        self.save_metadata(self.stocks_to_check)
+                    # Continue to fetch latest price and update
+                    price, timestamp = self.market_data_service.fetch_latest_price(stock, "1min")
+                    if price and (timestamp != self.stocks_to_check[stock]['timestamps'][-1]):
+                        self.stocks_to_check[stock]['prices'].append(price)
+                        self.stocks_to_check[stock]['timestamps'].append(timestamp)
+                        self.save_metadata(self.stocks_to_check)
                         result = self.logic.update_price(stock, price)
                         if result:
                             trade_type, current_price = result
@@ -76,6 +83,7 @@ class ZoneRecoveryBot(EWrapper, EClient):
                 logging.error(f"An error occurred: {e}")
 
 
+
     def trigger_trade(self, symbol, trade_type, quantity, current_price):
         contract = self.create_contract(symbol)
         order = self.create_order(trade_type, quantity, current_price)
@@ -83,10 +91,20 @@ class ZoneRecoveryBot(EWrapper, EClient):
         self.nextOrderId += 1
 
     def create_contract(self, symbol):
-        return Contract(symbol=symbol, secType="STK", currency="USD", exchange="SMART")
+        contract = Contract()
+        contract.symbol = symbol
+        contract.secType = "STK"  # Assuming stocks; adjust as necessary for other security types
+        contract.currency = "USD"
+        contract.exchange = "SMART"  # Ensure this matches the requirements of your trading strategy
+        return contract
 
     def create_order(self, action, quantity, current_price):
-        return Order(action=action, orderType="LMT", totalQuantity=quantity, lmtPrice=current_price, tif="GTC")
+        order = Order()
+        order.action = action
+        order.orderType = "LMT"
+        order.totalQuantity = quantity
+        order.lmtPrice = current_price
+        order.tif = "GTC"
 
     def stop(self):
         self.running = False

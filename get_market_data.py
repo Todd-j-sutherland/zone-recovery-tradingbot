@@ -35,23 +35,27 @@ class GetMarketData:
         return {time: float(info['4. close']) for time, info in data.get("Time Series (1min)", {}).items()}
 
     def fetch_initial_data(self, symbol, interval="1min", period=30):
-        """ Fetch the initial set of data for RSI calculation. """
+        """ Fetch the initial set of data for RSI calculation along with timestamps. """
         data = self._make_api_request(symbol, interval, "full")
         time_series = data.get("Time Series (1min)", {})
         sorted_times = sorted(time_series.keys())[-period:]  # Ensure only the last `period` minutes are returned
-        return [float(time_series[time]['4. close']) for time in sorted_times]
+        
+        # Return both prices and their timestamps
+        prices_with_times = [(float(time_series[time]['4. close']), time) for time in sorted_times]
+        return prices_with_times
+
 
     def fetch_latest_price(self, symbol, interval="1min"):
-        """ Fetch the most recent price for the specified stock symbol. """
+        """ Fetch the most recent price for the specified stock symbol along with its timestamp. """
         data = self._make_api_request(symbol, interval, "compact")
         time_series = data.get("Time Series (1min)", {})
         latest_time = max(time_series.keys(), default=None)
         if latest_time:
             latest_price = float(time_series[latest_time]['4. close'])
-            logging.info(f"Latest price for {symbol}: {latest_price}")
-            return latest_price
+            logging.info(f"Latest price for {symbol}: {latest_price} at {latest_time}")
+            return latest_price, latest_time
         logging.warning(f"No latest price data available for {symbol}")
-        return None
+        return None, None
 
 # Example usage
 if __name__ == "__main__":
