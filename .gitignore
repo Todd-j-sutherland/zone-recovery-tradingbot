@@ -1,2 +1,5 @@
 ib-example
 if-example/*
+.env
+__pycache__
+stock_metadata.json
