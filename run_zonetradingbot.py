@@ -19,7 +19,7 @@ class ZoneRecoveryBot(EWrapper, EClient):
         self.data_update_interval = 60
         self.running = True
         self.stocks_to_check = self.load_and_update_metadata(tickers)
-        self.logic = ZoneRecoveryLogic(self.stocks_to_check)
+        self.logic = ZoneRecoveryLogic(self.stocks_to_check.copy())
 
     def load_and_update_metadata(self, tickers):
         """ Load and update stock metadata from a file based on provided tickers. """
@@ -105,6 +105,7 @@ class ZoneRecoveryBot(EWrapper, EClient):
         order.totalQuantity = quantity
         order.lmtPrice = current_price
         order.tif = "GTC"
+        return order
 
     def stop(self):
         self.running = False
