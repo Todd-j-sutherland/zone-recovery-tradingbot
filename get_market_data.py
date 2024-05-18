@@ -2,6 +2,7 @@ import os
 import requests
 import logging
 from dotenv import load_dotenv
+import numpy as np  # Make sure to import numpy for trend analysis
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -89,8 +90,43 @@ class GetMarketData:
         print(low_price_stocks)
         return low_price_stocks
 
+    def get_potential_candidates(self, price_limit=10):
+        """Fetch potential stock candidates by analyzing trends."""
+        candidates = self.filter_stocks_by_price(price_limit)
+        potential_candidates = []
+
+        for candidate in candidates:
+            historical_data = self.fetch_initial_data(candidate, "1day", 365)
+            if self.analyze_trend(historical_data):
+                potential_candidates.append(candidate)
+                logging.info(f"Added {candidate} to potential candidates based on trend analysis.")
+
+        return potential_candidates
+
+    def analyze_trend(self, historical_data):
+        """Analyze trend based on moving averages."""
+        prices = np.array([price for price, _ in historical_data])
+        
+        short_term_window = 20
+        long_term_window = 50
+        
+        if len(prices) >= long_term_window:
+            sma_short = np.mean(prices[-short_term_window:])
+            sma_long = np.mean(prices[-long_term_window:])
+            
+            if sma_short > sma_long:
+                logging.info(f"Upward trend detected with SMA {sma_short} and LMA {sma_long}")
+                return True
+            elif sma_short < sma_long:
+                logging.info(f"Downward trend detected with SMA {sma_short} and LMA {sma_long}")
+                return True
+        
+        return False
+
 # Example usage
 if __name__ == "__main__":
     market_data = GetMarketData()
-    top_stocks = market_data.filter_top_stocks_by_price(10)
+    top_stocks = market_data.filter_stocks_by_price(10)
     logging.info(f"Top stocks under $10: {top_stocks}")
+    candidates = market_data.get_potential_candidates()
+    logging.info(f"Top stocks under $10: {candidates}")
