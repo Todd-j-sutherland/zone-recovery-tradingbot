@@ -41,6 +41,8 @@ The Zone Recovery Trading Bot is an automated trading system designed to monitor
 1. **Start the IB Gateway or TWS**:
    Ensure that your IB Gateway or TWS is running and connected.
 
+   **Note**: You need to have TWS API Gateway installed and running to connect to Interactive Brokers. You can download it from the [Interactive Brokers website](https://www.interactivebrokers.com/en/trading/ib-api.php).
+
 2. **Run the bot**:
    ```sh
    python bot.py AAPL MSFT TSLA

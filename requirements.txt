@@ -1,0 +1,6 @@
+requests==2.28.1
+python-dotenv==0.21.0
+ibapi==9.81.1
+alpaca-trade-api==1.4.3
+numpy==1.23.4
+argparse==1.4.0
