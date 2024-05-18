@@ -61,9 +61,9 @@ class ZoneRecoveryBot:
         else:
             stocks_data = {}
 
-        scanned_stocks = self.market_data_service.filter_stocks_by_price()
+        scanned_stocks = [candidates for candidates, _ in self.market_data_service.get_potential_candidates()]
         combined_tickers = tickers + [stock for stock in scanned_stocks if stock not in tickers]
-        updated_stocks_data = {ticker: stocks_data.get(ticker, {"fetched": False, "prices": []}) for ticker in combined_tickers}
+        updated_stocks_data = {ticker: stocks_data.get(ticker, {"fetched": False, "prices": [], "volumes": []}) for ticker in combined_tickers}
         self.save_metadata(updated_stocks_data)
         return updated_stocks_data
 
@@ -80,9 +80,10 @@ class ZoneRecoveryBot:
             try:
                 for stock, info in self.stocks_to_check.items():
                     if not info["fetched"]:
-                        initial_data = self.market_data_service.fetch_initial_data(stock, "1Min", 30)
+                        initial_data, volumes = self.market_data_service.fetch_initial_data(stock, "1day", 30, "delayed", "TIME_SERIES_DAILY")
                         self.stocks_to_check[stock]["prices"].extend([price for price, _ in initial_data])
                         self.stocks_to_check[stock]["timestamps"] = [time for _, time in initial_data]
+                        self.stocks_to_check[stock]["volumes"].extend(volumes)
                         self.stocks_to_check[stock]["fetched"] = True
                         self.save_metadata(self.stocks_to_check)
                     price, timestamp = self.market_data_service.fetch_latest_price(stock, "1Min")
@@ -122,6 +123,7 @@ class ZoneRecoveryBot:
         # Reset historical data for the stock when position is closed
         self.stocks_to_check[stock]["prices"] = []
         self.stocks_to_check[stock]["timestamps"] = []
+        self.stocks_to_check[stock]["volumes"] = []
 
     def trigger_trade(self, symbol, trade_type, quantity, current_price, alpaca=False):
         """Trigger a trade with the specified parameters."""
@@ -180,38 +182,6 @@ class ZoneRecoveryBot:
         self.ib_client.stop()
         logging.info("Disconnected and stopped successfully.")
 
-    def identify_profitable_stocks(self):
-        # Identify stocks with strong trends and profit potential
-        candidates = self.market_data_service.get_potential_candidates()
-        for candidate in candidates:
-            historical_data = self.market_data_service.fetch_initial_data(candidate, "day", 365)
-            if self.analyze_trend(historical_data):
-                self.stocks_to_check[candidate] = {"fetched": False, "prices": []}
-                if len(self.stocks_to_check) >= self.max_trades:
-                    break
-
-    def analyze_trend(self, historical_data):
-        # Convert historical data into a NumPy array for ease of manipulation
-        prices = np.array([price for price, _ in historical_data])
-        
-        # Calculate short-term and long-term moving averages
-        short_term_window = 20
-        long_term_window = 50
-        
-        if len(prices) >= long_term_window:
-            sma_short = np.mean(prices[-short_term_window:])
-            sma_long = np.mean(prices[-long_term_window:])
-            
-            # Determine if there is an upward or downward trend
-            if sma_short > sma_long:
-                logging.info(f"Upward trend detected with SMA {sma_short} and LMA {sma_long}")
-                return True  # Bullish signal
-            elif sma_short < sma_long:
-                logging.info(f"Downward trend detected with SMA {sma_short} and LMA {sma_long}")
-                return True  # Bearish signal
-        
-        # Return False if there isn't enough data to determine a trend or no strong trend is detected
-        return False
 
 def main():
     parser = argparse.ArgumentParser(description='Run the Zone Recovery Trading Bot with specified stock tickers.')
