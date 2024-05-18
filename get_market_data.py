@@ -168,9 +168,10 @@ class GetMarketData:
                 trend = "downward"
                 logging.info(f"Downward trend detected with SMA {sma_short} and LMA {sma_long}")
 
-            if trend == "upward" and current_volume > average_volume and rsi < 70 and current_price > resistance_level:
+            logging.info(f"Current price: {current_price}")
+            if trend == "upward" and current_volume > average_volume and rsi < 30 and current_price > resistance_level:
                 entry_signal = "Buy"
-            elif trend == "downward" and current_volume > average_volume and rsi > 30 and current_price < support_level:
+            elif trend == "downward" and current_volume > average_volume and rsi > 70 and current_price < support_level:
                 entry_signal = "Sell"
 
             logging.info(f"Trend: {trend}, RSI: {rsi}, Volume: {current_volume}, Average Volume: {average_volume}, Support: {support_level}, Resistance: {resistance_level}, Entry Signal: {entry_signal}")
