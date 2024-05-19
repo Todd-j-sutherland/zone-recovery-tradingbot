@@ -3,6 +3,7 @@ import requests
 import logging
 from dotenv import load_dotenv
 import numpy as np
+from utils import calculate_rsi  # Import the utility function
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -74,10 +75,11 @@ class GetMarketData:
         latest_time = max(time_series.keys(), default=None)
         if latest_time:
             latest_price = float(time_series[latest_time]['4. close'])
-            logging.info(f"Latest price for {symbol}: {latest_price} at {latest_time}")
-            return latest_price, latest_time
+            volume = time_series[latest_time]['5. volume']
+            logging.info(f"Latest price for {symbol}: {latest_price} at {latest_time} with volume: {volume}")
+            return latest_price, latest_time, volume
         logging.warning(f"No latest price data available for {symbol}")
-        return None, None
+        return None, None, None
 
     def fetch_top_gainers_losers_most_traded(self):
         """Fetch the top gainers, losers, and most actively traded stocks in the US market."""
@@ -118,34 +120,7 @@ class GetMarketData:
 
         return potential_candidates
 
-    def calculate_rsi(self, prices, period=14):
-        """Calculate the Relative Strength Index (RSI)."""
-        deltas = np.diff(prices)
-        seed = deltas[:period+1]
-        up = seed[seed >= 0].sum() / period
-        down = -seed[seed < 0].sum() / period
-        rs = up / down
-        rsi = np.zeros_like(prices)
-        rsi[:period] = 100. - 100. / (1. + rs)
-
-        for i in range(period, len(prices)):
-            delta = deltas[i - 1]
-            if delta > 0:
-                upval = delta
-                downval = 0.
-            else:
-                upval = 0.
-                downval = -delta
-
-            up = (up * (period - 1) + upval) / period
-            down = (down * (period - 1) + downval) / period
-
-            rs = up / down
-            rsi[i] = 100. - 100. / (1. + rs)
-
-        return rsi
-
-    def analyze_trend(self, historical_data, volumes, support_level, resistance_level):
+    def analyze_trend(self, historical_data, volumes, support_level, resistance_level, rsi_period=14):
         """Analyze trend based on moving averages and other indicators."""
         # Extract prices from the historical data tuples
         prices = np.array([price for price, date in historical_data])
@@ -153,7 +128,7 @@ class GetMarketData:
         if len(prices) >= self.long_term_window:
             sma_short = np.mean(prices[-self.short_term_window:])
             sma_long = np.mean(prices[-self.long_term_window:])
-            rsi = self.calculate_rsi(prices)[-1]
+            rsi = calculate_rsi(prices, rsi_period)
             current_price = prices[-1]
             current_volume = volumes[-1]
             average_volume = np.mean(volumes)
