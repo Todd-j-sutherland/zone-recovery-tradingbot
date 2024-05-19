@@ -8,14 +8,14 @@ from utils import calculate_rsi
 @pytest.fixture
 def setup_zone_recovery_logic():
     stocks_data = {
-        "DUO": {"prices": [1.68, 0.3988], "last_action": None, "entry_price": None}
+        "DUO": {"prices": [1.68, 0.3988, 2.0, 2.1, 2.2], "last_action": None, "entry_price": None}
     }
-    logic = ZoneRecoveryLogic(stocks_data, rsi_period=5)
+    logic = ZoneRecoveryLogic(stocks_data, rsi_period=5, entry_rsi_low=30, entry_rsi_high=70)
     return logic
 
 def test_update_price_appends_price(setup_zone_recovery_logic):
     setup_zone_recovery_logic.update_price("DUO", 2.00)
-    assert setup_zone_recovery_logic.stocks_data["DUO"]["prices"] == [1.68, 0.3988, 2.00]
+    assert setup_zone_recovery_logic.stocks_data["DUO"]["prices"] == [0.3988, 2.0, 2.1, 2.2, 2.00]
 
 def test_update_price_removes_oldest_price(setup_zone_recovery_logic):
     # Add prices to reach the rsi_period
@@ -23,11 +23,11 @@ def test_update_price_removes_oldest_price(setup_zone_recovery_logic):
     for price in prices:
         setup_zone_recovery_logic.update_price("DUO", price)
     
-    assert setup_zone_recovery_logic.stocks_data["DUO"]["prices"] == [1.68, 0.3988, 2.00, 2.10, 2.20]
+    assert setup_zone_recovery_logic.stocks_data["DUO"]["prices"] ==  [2.1, 2.2, 2.0, 2.1, 2.2]
 
     # Add another price to exceed the rsi_period
     setup_zone_recovery_logic.update_price("DUO", 2.30)
-    assert setup_zone_recovery_logic.stocks_data["DUO"]["prices"] == [0.3988, 2.00, 2.10, 2.20, 2.30]
+    assert setup_zone_recovery_logic.stocks_data["DUO"]["prices"] == [2.2, 2.0, 2.1, 2.2, 2.3]
 
 def test_update_price_calls_calculate_rsi(setup_zone_recovery_logic):
     prices = [1.68, 0.3988, 2.00, 2.10, 2.20]
@@ -38,6 +38,7 @@ def test_update_price_calls_calculate_rsi(setup_zone_recovery_logic):
     assert result == ("BUY", 2.30) or result == ("SELL", 2.30)
 
 def test_update_price_returns_none_if_rsi_period_not_reached(setup_zone_recovery_logic):
+    setup_zone_recovery_logic.stocks_data["DUO"]["prices"] = []
     prices = [1.68, 0.3988, 2.00]
     for price in prices:
         result = setup_zone_recovery_logic.update_price("DUO", price)
@@ -82,17 +83,24 @@ def test_calculate_total_profit(setup_zone_recovery_logic):
 def test_calculate_rsi_and_check_profit_closes_all(setup_zone_recovery_logic):
     setup_zone_recovery_logic.positions["DUO"]["long"] = [{"price": 1.0, "qty": 10}]
     setup_zone_recovery_logic.positions["DUO"]["short"] = [{"price": 3.0, "qty": 5}]
+    setup_zone_recovery_logic.stocks_data["DUO"]["prices"] = [1, 1, 1, 1, 1]  # Ensure RSI is at 50 (neutral)
     result = setup_zone_recovery_logic.calculate_rsi_and_check_profit("DUO", 4.0)
     assert result == ("CLOSE_ALL", 4.0)
     assert setup_zone_recovery_logic.positions["DUO"] == {"long": [], "short": []}
 
 def test_calculate_rsi_and_check_profit_triggers_buy(setup_zone_recovery_logic):
+    # Set prices to ensure RSI is low enough to trigger a BUY
+    setup_zone_recovery_logic.stocks_data["DUO"]["prices"] = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1]  # Ensure RSI is low
     setup_zone_recovery_logic.positions["DUO"]["long"] = []
+    setup_zone_recovery_logic.positions["DUO"]["short"] = []
+    
     result = setup_zone_recovery_logic.calculate_rsi_and_check_profit("DUO", 1.0)
+    
     assert result == ("BUY", 1.0)
     assert setup_zone_recovery_logic.positions["DUO"]["long"] == [{"price": 1.0, "qty": 1}]
 
 def test_calculate_rsi_and_check_profit_triggers_sell(setup_zone_recovery_logic):
+    setup_zone_recovery_logic.stocks_data["DUO"]["prices"] = [1, 2, 3, 4, 5, 6, 7, 8, 9]  # Ensure RSI is high
     setup_zone_recovery_logic.positions["DUO"]["short"] = []
     result = setup_zone_recovery_logic.calculate_rsi_and_check_profit("DUO", 10.0)
     assert result == ("SELL", 10.0)
