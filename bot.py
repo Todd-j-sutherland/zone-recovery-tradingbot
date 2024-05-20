@@ -8,7 +8,6 @@ from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 from ibapi.order import Order
-from alpaca.data import StockHistoricalDataClient
 from alpaca.trading import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderStatus
@@ -29,7 +28,7 @@ class IBClient(EWrapper, EClient):
         self.nextValidOrderId = orderId
 
     def start(self):
-        self.connect("127.0.0.1", 7496, clientId=self.client_id)
+        self.connect("127.0.0.1", 4002, clientId=self.client_id)
         thread = threading.Thread(target=self.run)
         thread.start()
         self.waitForConnection()
@@ -62,7 +61,6 @@ class ZoneRecoveryBot:
                 stocks_data = {}
         else:
             stocks_data = {}
-
         scanned_stocks = [candidates for candidates, _ in self.market_data_service.get_potential_candidates()]
         combined_tickers = tickers + [stock for stock in scanned_stocks if stock not in tickers]
         updated_stocks_data = {ticker: stocks_data.get(ticker, {"fetched": False, "prices": [], "volumes": []}) for ticker in combined_tickers}
@@ -86,15 +84,20 @@ class ZoneRecoveryBot:
                         self.stocks_to_check[stock]["timestamps"] = [time for _, time in initial_data]
                         self.stocks_to_check[stock]["volumes"].extend(volumes)
                         self.stocks_to_check[stock]["fetched"] = True
-                    price, timestamp, volume = self.market_data_service.fetch_latest_price(stock, "1Min")
-                    if price and (not self.stocks_to_check[stock]['timestamps'] or timestamp != self.stocks_to_check[stock]['timestamps'][-1]):
-                        self.stocks_to_check[stock]['prices'].append(price)
-                        self.stocks_to_check[stock]['timestamps'].append(timestamp)
-                        self.stocks_to_check[stock]["volumes"].append(volume)
-                        self.stocks_to_check[stock]['prices'].pop(0)
-                        self.stocks_to_check[stock]['timestamps'].pop(0)
-                        self.stocks_to_check[stock]['volumes'].pop(0)
-                        self.check_and_execute_trades(stock, price)
+                    
+                    if len(self.stocks_to_check[stock]["prices"]) >= self.logic.rsi_period:
+                        price, timestamp, volume = self.market_data_service.fetch_latest_price(stock, "1Min")
+                        if price and (not self.stocks_to_check[stock]['timestamps'] or timestamp != self.stocks_to_check[stock]['timestamps'][-1]):
+                            self.stocks_to_check[stock]['prices'].append(price)
+                            self.stocks_to_check[stock]['timestamps'].append(timestamp)
+                            self.stocks_to_check[stock]["volumes"].append(volume)
+                            self.stocks_to_check[stock]['prices'].pop(0)
+                            self.stocks_to_check[stock]['timestamps'].pop(0)
+                            self.stocks_to_check[stock]['volumes'].pop(0)
+                            self.check_and_execute_trades(stock, price)
+                    else:
+                        logging.warning(f"Did not find enough inital data for stock: {stock}")
+                        self.stocks_to_check[stock]["fetched"] = False
                 time.sleep(self.data_update_interval)
             except KeyboardInterrupt:
                 self.stop()

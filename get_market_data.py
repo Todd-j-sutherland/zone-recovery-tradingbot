@@ -75,7 +75,7 @@ class GetMarketData:
         latest_time = max(time_series.keys(), default=None)
         if latest_time:
             latest_price = float(time_series[latest_time]['4. close'])
-            volume = time_series[latest_time]['5. volume']
+            volume = int(time_series[latest_time]['5. volume'])
             logging.info(f"Latest price for {symbol}: {latest_price} at {latest_time} with volume: {volume}")
             return latest_price, latest_time, volume
         logging.warning(f"No latest price data available for {symbol}")

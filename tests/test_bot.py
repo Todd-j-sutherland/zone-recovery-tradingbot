@@ -1,98 +1,162 @@
 import sys
 import os
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-import sys
-import os
 import pytest
-from unittest.mock import MagicMock, patch
-import alpaca_trade_api as tradeapi
-from bot import IBClient, ZoneRecoveryBot
+from unittest.mock import call, patch, MagicMock
+from bot import IBClient, ZoneRecoveryBot  # make sure to import your IBClient class
+from get_market_data import GetMarketData
+
+mock_data = {
+    "Time Series (Daily)": {
+        "2021-01-01": {"4. close": "130.00", "5. volume": "1000"},
+        "2021-01-02": {"4. close": "135.00", "5. volume": "1050"},
+        "2021-01-03": {"4. close": "140.00", "5. volume": "1100"},
+    },
+    "Time Series (1min)": {
+        "2021-01-01 09:30:00": {"4. close": "130.00", "5. volume": "1000"},
+        "2021-01-01 09:31:00": {"4. close": "131.00", "5. volume": "1100"},
+        "2021-01-01 09:32:00": {"4. close": "132.00", "5. volume": "1200"},
+    },
+    "top_gainers": [
+        {"ticker": "AAPL", "price": "150.00", "change": "+2%"},
+        {"ticker": "MSFT", "price": "250.00", "change": "+1.5%"},
+    ],
+    "top_losers": [
+        {"ticker": "TSLA", "price": "600.00", "change": "-1.5%"},
+        {"ticker": "AMZN", "price": "3100.00", "change": "-1%"},
+    ],
+    "most_actively_traded": [
+        {"ticker": "GOOGL", "price": "2200.00"},
+        {"ticker": "FB", "price": "350.00"},
+    ]
+}
+
 
 @pytest.fixture
-def mock_ib_client():
-    client = MagicMock(spec=IBClient)
-    client.nextValidOrderId = 1
+def ib_client(mocker):
+    # Mock the EClient methods and essential attributes
+    mocker.patch('ibapi.client.EClient.__init__', return_value=None)
+    mocker.patch('ibapi.client.EClient.run', return_value=None)  # Override run to do nothing or control it as needed
+    connect_mock = mocker.patch('ibapi.client.EClient.connect')
+    disconnect_mock = mocker.patch('ibapi.client.EClient.disconnect')
+    is_connected_mock = mocker.patch('ibapi.client.EClient.isConnected', return_value=True)
+    
+    # Simulate msg_queue initialization if it's used directly
+    client = IBClient(client_id=1)
+    client.msg_queue = MagicMock()  # Create a msg_queue if the real EClient uses it
+
+    client.connect_mock = connect_mock
+    client.disconnect_mock = disconnect_mock
+    client.is_connected_mock = is_connected_mock
+    
     return client
+
+def test_start(ib_client):
+    # Test the start method by simulating a connection
+    with patch('threading.Thread.start', return_value=None):
+        ib_client.start()
+        ib_client.connect_mock.assert_called_once_with("127.0.0.1", 4002, clientId=1)
+
+def test_stop(ib_client):
+    # Test the stop method to ensure it properly calls disconnect
+    ib_client.stop()
+    ib_client.disconnect_mock.assert_called_once()
+
 
 @pytest.fixture
 def mock_alpaca_client():
-    client = MagicMock(spec=tradeapi.REST)
-    return client
+    submit_order_mock = MagicMock()
+    get_order_mock = MagicMock()
+    return MagicMock(submit_order=submit_order_mock, get_order=get_order_mock)
 
 @pytest.fixture
-def setup_zone_recovery_bot(mock_ib_client, mock_alpaca_client):
-    with patch('threading.Thread') as mock_thread, \
-         patch('get_market_data.GetMarketData.get_potential_candidates') as mock_get_potential_candidates, \
-         patch('get_market_data.GetMarketData.fetch_initial_data') as mock_fetch_initial_data, \
-         patch('get_market_data.GetMarketData.fetch_latest_price') as mock_fetch_latest_price, \
-         patch('time.sleep', return_value=None):
+def zone_recovery_bot(ib_client, mock_alpaca_client, mocker):
+    # Define a function to generate mock responses based on the requested series type
 
-        # Mock threading
-        mock_thread.return_value.start = MagicMock()
-        
-        # Mock market data service methods
-        mock_get_potential_candidates.return_value = [("TEST", "extra_value")]
-        mock_fetch_initial_data.return_value = ([(100, "2023-05-01")], [1000])
-        mock_fetch_latest_price.return_value = (100, "2023-05-01")
+    # Patch requests.get to return this mock data
+    mocker.patch('requests.get', return_value=MagicMock(
+        json=MagicMock(return_value=mock_data),  # Return the mock data as the JSON response
+        raise_for_status=MagicMock()
+    ))
 
-        tickers = ["TEST"]
-        bot = ZoneRecoveryBot(tickers, mock_ib_client, mock_alpaca_client)
-        
-        # Override the running attribute to control the loop
-        bot.running = False
-        
-        yield bot
-        bot.stop()
+    return ZoneRecoveryBot(['AAPL', 'GOOGL'], ib_client, mock_alpaca_client)
 
-def test_market_going_up(setup_zone_recovery_bot):
-    mock_market_data = [
-        (100, "2023-05-01"), (105, "2023-05-02"), (110, "2023-05-03"),
-        (115, "2023-05-04"), (120, "2023-05-05")
-    ]
-    setup_zone_recovery_bot.market_data_service.fetch_initial_data = MagicMock(return_value=(mock_market_data, []))
-    setup_zone_recovery_bot.market_data_service.fetch_latest_price = MagicMock(side_effect=mock_market_data)
-    setup_zone_recovery_bot.save_metadata = MagicMock()  # Mock save_metadata to avoid file I/O
+def test_start(zone_recovery_bot):
+    # This Test starts and checks if we have enough inital data, If we don't we just keep 
+    # fetching until we eventually have enough records to use it for our rsi
+    zone_recovery_bot.running = MagicMock()
+    zone_recovery_bot.running.__bool__.side_effect = [True, False]
+    with patch('time.sleep', return_value=None) as mock_sleep:
+        zone_recovery_bot.start()
+        assert mock_sleep.mock_calls == [call(60)]
+        assert zone_recovery_bot.stocks_to_check == {
+            'AAPL': {
+                'fetched': False, 'prices': [130.0, 135.0, 140.0], 'volumes': [1000, 1050, 1100],
+                'timestamps': ['2021-01-01', '2021-01-02', '2021-01-03']
+                },
+            'GOOGL': {
+                'fetched': False, 'prices': [130.0, 135.0, 140.0], 'volumes': [1000, 1050, 1100],
+                'timestamps': ['2021-01-01', '2021-01-02', '2021-01-03']
+                }
+            }
 
-    # with patch.object(setup_zone_recovery_bot, 'running', side_effect=[True, False]):
-    #     setup_zone_recovery_bot.fetch_data_periodically()
+def generate_trend_data():
+    # Generate data for 14 trading days
+    aapl_prices = [100 + i * 2 for i in range(14)]  # Gradual increase
+    googl_prices = [200 - i * 2 for i in range(14)]  # Gradual decrease
+    dates = [f"2021-01-{i:02d}" for i in range(1, 15)]
 
-    # assert setup_zone_recovery_bot.logic.update_price.call_count == len(mock_market_data)
+    aapl_data = {date: {"4. close": str(price), "5. volume": "1000"} for date, price in zip(dates, aapl_prices)}
+    googl_data = {date: {"4. close": str(price), "5. volume": "1000"} for date, price in zip(dates, googl_prices)}
+
+    return {
+        "AAPL": aapl_data,
+        "GOOGL": googl_data
+    }
+
+def generate_latest_data(index):
+    return {
+        "Time Series (1min)": {
+            f"2021-01-15 09:{index}:00": {"4. close": "13{index}.00", "5. volume": "1000"}
+            }
+        }
+
+@pytest.fixture
+def zone_recovery_bot_sophisticated_trades(ib_client, mock_alpaca_client, mocker):
+    aapl_index = googl_index = 0
+    def mock_api_response(*args, **kwargs):
+        nonlocal aapl_index, googl_index
+        breakpoint()
+        if 'function' in kwargs['params']:
+            if kwargs['params']['function'] == 'TOP_GAINERS_LOSERS':
+                response = mock_data
+            elif kwargs['params']['function'] == 'TIME_SERIES_DAILY':
+                response = generate_trend_data()[kwargs['params']['symbol']]
+            elif kwargs['params']['function'] == 'TIME_SERIES_INTRADAY':
+                symbol = kwargs['params']['symbol']
+                if symbol == 'AAPL':
+                    response = generate_latest_data(aapl_index)
+                    aapl_index += 1
+                else:
+                    response = generate_latest_data(googl_index)
+                    googl_index += 1
+        return MagicMock(json=MagicMock(return_value=response), raise_for_status=MagicMock())
+
+    mocker.patch('requests.get', lambda url, params: mock_api_response(url, params=params))
 
 
+    return ZoneRecoveryBot(['AAPL', 'GOOGL'], ib_client, mock_alpaca_client)
 
+def test_trading_decisions(zone_recovery_bot_sophisticated_trades):
+    # Run the bot and simulate trading decisions
+    zone_recovery_bot_sophisticated_trades.running = MagicMock()
+    zone_recovery_bot_sophisticated_trades.running.__bool__.side_effect = [True] * 14 + [False]  # Simulate 14 days of trading
+    with patch('time.sleep', return_value=None):
+        zone_recovery_bot_sophisticated_trades.start()
 
-# def test_market_going_down(setup_zone_recovery_bot):
-#     mock_market_data = [
-#         (120, "2023-05-01"), (115, "2023-05-02"), (110, "2023-05-03"),
-#         (105, "2023-05-04"), (100, "2023-05-05")
-#     ]
-#     setup_zone_recovery_bot.market_data_service.fetch_initial_data = MagicMock(return_value=(mock_market_data, []))
-#     setup_zone_recovery_bot.market_data_service.fetch_latest_price = MagicMock(side_effect=mock_market_data)
-#     setup_zone_recovery_bot.save_metadata = MagicMock()  # Mock save_metadata to avoid file I/O
-
-#     with patch('threading.Thread.start'):
-#         with patch.object(setup_zone_recovery_bot, 'fetch_data_periodically', side_effect=lambda: None):
-#             setup_zone_recovery_bot.start()
-
-#     setup_zone_recovery_bot.fetch_data()
-
-#     assert setup_zone_recovery_bot.logic.update_price.call_count == len(mock_market_data)
-
-# def test_market_going_sideways(setup_zone_recovery_bot):
-#     mock_market_data = [
-#         (100, "2023-05-01"), (101, "2023-05-02"), (100, "2023-05-03"),
-#         (101, "2023-05-04"), (100, "2023-05-05")
-#     ]
-#     setup_zone_recovery_bot.market_data_service.fetch_initial_data = MagicMock(return_value=(mock_market_data, []))
-#     setup_zone_recovery_bot.market_data_service.fetch_latest_price = MagicMock(side_effect=mock_market_data)
-#     setup_zone_recovery_bot.save_metadata = MagicMock()  # Mock save_metadata to avoid file I/O
-
-#     with patch('threading.Thread.start'):
-#         with patch.object(setup_zone_recovery_bot, 'fetch_data_periodically', side_effect=lambda: None):
-#             setup_zone_recovery_bot.start()
-
-#     setup_zone_recovery_bot.fetch_data()
-
-#     assert setup_zone_recovery_bot.logic.update_price.call_count == len(mock_market_data)
-
-
+#     # Assertions to verify the trading decisions and outcomes
+#     # You may need to implement or mock methods that log or track trading decisions and results
+#     # Example:
+#     assert zone_recovery_bot_sophisticated_trades.trade_log.count_decisions() == 5
+#     assert zone_recovery_bot_sophisticated_trades.trade_log.last_decision_profitable()
