@@ -74,7 +74,6 @@ class ZoneRecoveryBot:
         self.logic = ZoneRecoveryLogic()
         self.ib_client = ib_client
         self.alpaca_trading_client = alpaca_trading_client
-        # store how much profit we are making for this session
         self.total_session_profit = 0
 
     def load_and_update_metadata(self, tickers):
@@ -121,7 +120,7 @@ class ZoneRecoveryBot:
                             self.stocks_to_check[stock]['volumes'].pop(0)
                             self.check_and_execute_trades(stock, price)
                     else:
-                        logging.warning(f"Did not find enough inital data for stock: {stock}")
+                        logging.warning(f"Did not find enough initial data for stock: {stock}")
                         self.stocks_to_check[stock]["fetched"] = False
                 time.sleep(self.data_update_interval)
             except KeyboardInterrupt:
@@ -141,11 +140,9 @@ class ZoneRecoveryBot:
 
     def close_all_positions(self, stock, current_price):
         """Close all positions for the given stock symbol."""
-        # Close long position if it exists
         for _ in self.logic.positions[stock]['long']:
             self.trigger_trade(stock, "SELL", 1, current_price, alpaca=True)
 
-        # Close short position if it exists
         for _ in self.logic.positions[stock]['short']:
             self.trigger_trade(stock, "BUY", 1, current_price, alpaca=False)
 
@@ -159,93 +156,89 @@ class ZoneRecoveryBot:
     def trigger_trade(self, symbol, trade_type, quantity, current_price, alpaca=False):
         """Trigger a trade with the specified parameters."""
         if alpaca:
-            # Use Alpaca for long trades
-            if trade_type == "BUY":
-                order_data = MarketOrderRequest(
-                    symbol=symbol,
-                    qty=quantity,
-                    side=OrderSide.BUY,
-                    time_in_force=TimeInForce.GTC
-                ) if current_price is None else LimitOrderRequest(
-                    symbol=symbol,
-                    qty=quantity,
-                    side=OrderSide.BUY,
-                    limit_price=current_price,
-                    time_in_force=TimeInForce.GTC
-                )
-            else:
-                order_data = MarketOrderRequest(
-                    symbol=symbol,
-                    qty=quantity,
-                    side=OrderSide.SELL,
-                    time_in_force=TimeInForce.GTC
-                ) if current_price is None else LimitOrderRequest(
-                    symbol=symbol,
-                    qty=quantity,
-                    side=OrderSide.SELL,
-                    limit_price=current_price,
-                    time_in_force=TimeInForce.GTC
-                )
+            order_data = MarketOrderRequest(
+                symbol=symbol,
+                qty=quantity,
+                side=OrderSide.BUY if trade_type == "BUY" else OrderSide.SELL,
+                time_in_force=TimeInForce.GTC
+            ) if current_price is None else LimitOrderRequest(
+                symbol=symbol,
+                qty=quantity,
+                side=OrderSide.BUY if trade_type == "BUY" else OrderSide.SELL,
+                limit_price=current_price,
+                time_in_force=TimeInForce.GTC
+            )
             order = self.alpaca_trading_client.submit_order(order_data)
-            
-            # Monitor the order status
-            order_status = self.monitor_alpaca_order(order)
-            if order_status == OrderStatus.FILLED:
-                self.handle_filled_order(order, True)
-            elif order_status == OrderStatus.REJECTED:
-                self.handle_rejected_order(order, True)
+            # Check order status and handle accordingly
+            self.monitor_alpaca_order(order)
         else:
-            # Use IB for short trades
             self.ib_client.reqIds(-1)  # Request a new order ID
             while self.ib_client.nextValidOrderId is None:
                 time.sleep(0.1)
-
             order_id = self.ib_client.nextValidOrderId
             contract = self.create_contract(symbol)
             order = self.create_order(trade_type, quantity, current_price)
             self.ib_client.placeOrder(order_id, contract, order)
-
-            # Monitor the order status
-            order_status = self.monitor_ib_order(order_id)
-            breakpoint()
-            if order_status == 'Filled':
-                self.handle_filled_order(order, False)
-            elif order_status == 'Rejected':
-                self.handle_rejected_order(order, False)
-
-            self.ib_client.nextValidOrderId += 1
-
-    def monitor_alpaca_order(self, order):
-        while True:
-            order_status = self.alpaca_trading_client.get_order(order.id).status
-            if order_status in [OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELED]:
-                return order_status
-            time.sleep(1)
+            # Monitoring and handling of the order status after placing the order
+            self.monitor_ib_order(order_id)
 
     def monitor_ib_order(self, order_id):
-        while True:
-            order_status = self.ib_client.order_status(order_id)
-            if order_status in ['Filled', 'Rejected', 'Cancelled']:
-                return order_status
-            time.sleep(1)
+        """Monitor IB order and handle its execution status."""
+        filled = self.ib_client.waitForOrderFill(order_id)
+        if filled:
+            order_details = self.ib_client.order_statuses.get(order_id, {})
+            self.handle_filled_order(order_details, False)
+        else:
+            order_details = self.ib_client.order_statuses.get(order_id, {})
+            self.handle_rejected_order(order_details, False)
+
+    def monitor_alpaca_order(self, order):
+        """Monitor the Alpaca order status."""
+        try:
+            # Poll the order status until it is finalized ('filled', 'rejected', or 'canceled')
+            while True:
+                updated_order = self.alpaca_trading_client.get_order(order.id)
+                if updated_order.status in [OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELED]:
+                    if updated_order.status == OrderStatus.FILLED:
+                        self.handle_filled_order(updated_order, True)
+                    else:
+                        self.handle_rejected_order(updated_order, True)
+                    break  # Exit the loop once the order is finalized
+                time.sleep(1)  # Sleep to prevent excessive API calls
+        except Exception as e:
+            logging.error(f"Error monitoring Alpaca order: {e}")
 
     def handle_filled_order(self, order, alpaca):
         """Handle filled orders."""
-        logging.info(f"Order {order} filled")
-        symbol = order.symbol
-        price = order.filled_avg_price
-        qty = order.qty
-
         if alpaca:
+            # Accessing Alpaca order object attributes directly
+            symbol = order.symbol
+            price = order.filled_avg_price if order.filled_avg_price else order.limit_price
+            qty = order.filled_qty
+            logging.info(f"Order for {symbol} filled at {price} with quantity {qty}")
             self.stocks_to_check[symbol]["long"].append({"price": price, "qty": qty})
         else:
+            # Assuming 'order' is a dictionary with keys for IB orders
+            symbol = order.get('symbol')
+            price = order.get('avgFillPrice')
+            qty = order.get('filled')
+            logging.info(f"Order for {symbol} filled at {price}")
             self.stocks_to_check[symbol]["short"].append({"price": price, "qty": qty})
 
         self.save_metadata(self.stocks_to_check)
 
-    def handle_rejected_order(self, order):
+    def handle_rejected_order(self, order, alpaca):
         """Handle rejected orders."""
-        logging.info(f"Order {order} rejected")
+        if alpaca:
+            # Accessing Alpaca order object attributes directly
+            symbol = order.symbol
+            logging.info(f"Order for {symbol} was rejected")
+        else:
+            # Assuming 'order' is a dictionary with keys for IB orders
+            symbol = order.get('symbol')
+            logging.info(f"Order for {symbol} was rejected")
+        # Additional handling logic can be implemented here
+
 
     def create_contract(self, symbol):
         contract = Contract()
