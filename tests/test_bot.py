@@ -102,13 +102,14 @@ def test_start(zone_recovery_bot):
         assert mock_sleep.mock_calls == [call(60)]
         assert zone_recovery_bot.stocks_to_check == {
             'AAPL': {
-                'fetched': False, 'prices': [130.0, 135.0, 140.0], 'volumes': [1000, 1050, 1100],
+                'fetched': False, 'prices': [130.0, 135.0, 140.0],
+                'volumes': [1000, 1050, 1100], 'long': [], 'short': [],
                 'timestamps': ['2021-01-01', '2021-01-02', '2021-01-03']
-                },
+                }, 
             'GOOGL': {
-                'fetched': False, 'prices': [130.0, 135.0, 140.0], 'volumes': [1000, 1050, 1100],
-                'timestamps': ['2021-01-01', '2021-01-02', '2021-01-03']
-                }
+                'fetched': False, 'prices': [130.0, 135.0, 140.0], 
+                'volumes': [1000, 1050, 1100], 'long': [], 'short': [], 
+                'timestamps': ['2021-01-01', '2021-01-02', '2021-01-03']}
             }
 
 def generate_trend_data():
@@ -157,18 +158,21 @@ def zone_recovery_bot_sophisticated_trades(ib_client, mock_alpaca_client, mocker
 
     return ZoneRecoveryBot(['AAPL', 'GOOGL'], ib_client, mock_alpaca_client)
 
-inital_fetch_expected_data = {'AAPL': {'fetched': True, 'prices': [104.0, 106.0, 108.0, 110.0, 112.0, 114.0, 116.0, 118.0, 120.0, 122.0, 124.0, 126.0, 130.0, 130.0], 'volumes': [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000], 'timestamps': ['2021-01-02', '2021-01-03', '2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08', '2021-01-09', '2021-01-10', '2021-01-11', '2021-01-12', '2021-01-13', '2021-01-14', '2021-01-15 09:00:00']}, 'GOOGL': {'fetched': False, 'prices': [], 'volumes': []}}
-
+inital_fetch_expected_data = {'AAPL': {'fetched': True, 'prices': [102.0, 104.0, 106.0, 108.0, 110.0, 112.0, 114.0, 116.0, 118.0, 120.0, 122.0, 124.0, 126.0, 130.0], 'volumes': [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000], 'long': [], 'short': [{'price': 130.0, 'qty': 1}], 'timestamps': ['2021-01-02', '2021-01-03', '2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08', '2021-01-09', '2021-01-10', '2021-01-11', '2021-01-12', '2021-01-13', '2021-01-14', '2021-01-15 09:00:00']}, 'GOOGL': {'fetched': False, 'prices': [], 'volumes': [], 'long': [], 'short': []}}
 def test_trading_decisions(zone_recovery_bot_sophisticated_trades):
     run_idx = 0
     def run_checker():
         nonlocal run_idx
         print("Checking run condition...")  # Optional: for debugging output
-        if run_idx >= 5:
+        if run_idx >= 4:
             return False
         if run_idx == 1:
+            # breakpoint()
             assert zone_recovery_bot_sophisticated_trades.stocks_to_check == inital_fetch_expected_data
-        breakpoint()  # Pause here in interactive mode, or you could log/output state information
+        if run_idx == 3:
+            breakpoint()
+            # assert zone_recovery_bot_sophisticated_trades.stocks_to_check == inital_fetch_expected_data
+        # breakpoint()  # Pause here in interactive mode, or you could log/output state information
         run_idx += 1
         return True
     

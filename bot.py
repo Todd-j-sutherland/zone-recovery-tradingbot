@@ -18,14 +18,26 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+
 class IBClient(EWrapper, EClient):
     def __init__(self, client_id):
         EClient.__init__(self, self)
         self.client_id = client_id
         self.nextValidOrderId = None
+        self.order_statuses = {}  # Dictionary to track order statuses
 
     def nextValidId(self, orderId):
         self.nextValidOrderId = orderId
+
+    def orderStatus(self, orderId, status, filled, remaining, avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice):
+        super().orderStatus(orderId, status, filled, remaining, avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice)
+        self.order_statuses[orderId] = {
+            "status": status,
+            "filled": filled,
+            "remaining": remaining,
+            "avgFillPrice": avgFillPrice
+        }
+        print(f"Order Status Updated: OrderId={orderId}, Status={status}, Filled={filled}")
 
     def start(self):
         self.connect("127.0.0.1", 4002, clientId=self.client_id)
@@ -40,6 +52,22 @@ class IBClient(EWrapper, EClient):
     def stop(self):
         self.disconnect()
 
+    def waitForOrderFill(self, orderId, timeout=30):
+        """ Wait for an order to be filled or until timeout. """
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if orderId in self.order_statuses:
+                status = self.order_statuses[orderId]
+                if status['status'] == 'Filled':
+                    print(f"Order {orderId} fully filled.")
+                    return True
+                elif status['status'] in ['Cancelled', 'Inactive']:
+                    print(f"Order {orderId} is {status['status']}.")
+                    return False
+            time.sleep(1)  # Sleep to reduce CPU usage
+        print(f"Timeout: Order {orderId} not filled in {timeout} seconds.")
+        return False
+
 class ZoneRecoveryBot:
     def __init__(self, tickers, ib_client, alpaca_trading_client, metadata_file='stock_metadata.json'):
         self.metadata_file = metadata_file
@@ -47,7 +75,7 @@ class ZoneRecoveryBot:
         self.data_update_interval = 60
         self.running = True
         self.stocks_to_check = self.load_and_update_metadata(tickers)
-        self.logic = ZoneRecoveryLogic(self.stocks_to_check.copy())
+        self.logic = ZoneRecoveryLogic()
         self.ib_client = ib_client
         self.alpaca_trading_client = alpaca_trading_client
         # store how much profit we are making for this session
@@ -109,7 +137,7 @@ class ZoneRecoveryBot:
         """Check if a trade should be executed based on current price and profit conditions."""
         result = self.logic.calculate_rsi_and_check_profit(self.stocks_to_check[stock], stock, current_price)
         if result:
-            trade_type, price = result
+            trade_type, price, profit = result
             if trade_type == "CLOSE_ALL":
                 self.close_all_positions(stock, current_price)
             else:
@@ -162,7 +190,6 @@ class ZoneRecoveryBot:
                     limit_price=current_price,
                     time_in_force=TimeInForce.GTC
                 )
-            
             order = self.alpaca_trading_client.submit_order(order_data)
             
             # Monitor the order status
@@ -184,6 +211,7 @@ class ZoneRecoveryBot:
 
             # Monitor the order status
             order_status = self.monitor_ib_order(order_id)
+            breakpoint()
             if order_status == 'Filled':
                 self.handle_filled_order(order, False)
             elif order_status == 'Rejected':
@@ -207,7 +235,7 @@ class ZoneRecoveryBot:
 
     def handle_filled_order(self, order, alpaca):
         """Handle filled orders."""
-        logging.info(f"Order {order.id} filled")
+        logging.info(f"Order {order} filled")
         symbol = order.symbol
         price = order.filled_avg_price
         qty = order.qty
@@ -218,11 +246,10 @@ class ZoneRecoveryBot:
             self.stocks_to_check[symbol]["short"].append({"price": price, "qty": qty})
 
         self.save_metadata(self.stocks_to_check)
-        self.logic.stocks_data = self.stocks_to_check
 
     def handle_rejected_order(self, order):
         """Handle rejected orders."""
-        logging.info(f"Order {order.id} rejected")
+        logging.info(f"Order {order} rejected")
 
     def create_contract(self, symbol):
         contract = Contract()
