@@ -50,6 +50,8 @@ class ZoneRecoveryBot:
         self.logic = ZoneRecoveryLogic(self.stocks_to_check.copy())
         self.ib_client = ib_client
         self.alpaca_trading_client = alpaca_trading_client
+        # store how much profit we are making for this session
+        self.total_session_profit = 0
 
     def load_and_update_metadata(self, tickers):
         if os.path.exists(self.metadata_file):
@@ -63,7 +65,7 @@ class ZoneRecoveryBot:
             stocks_data = {}
         scanned_stocks = [candidates for candidates, _ in self.market_data_service.get_potential_candidates()]
         combined_tickers = tickers + [stock for stock in scanned_stocks if stock not in tickers]
-        updated_stocks_data = {ticker: stocks_data.get(ticker, {"fetched": False, "prices": [], "volumes": []}) for ticker in combined_tickers}
+        updated_stocks_data = {ticker: stocks_data.get(ticker, {"fetched": False, "prices": [], "volumes": [], "long": [], "short": []}) for ticker in combined_tickers}
         return updated_stocks_data
 
     def save_metadata(self, stocks_data):
@@ -84,7 +86,6 @@ class ZoneRecoveryBot:
                         self.stocks_to_check[stock]["timestamps"] = [time for _, time in initial_data]
                         self.stocks_to_check[stock]["volumes"].extend(volumes)
                         self.stocks_to_check[stock]["fetched"] = True
-                    
                     if len(self.stocks_to_check[stock]["prices"]) >= self.logic.rsi_period:
                         price, timestamp, volume = self.market_data_service.fetch_latest_price(stock, "1Min")
                         if price and (not self.stocks_to_check[stock]['timestamps'] or timestamp != self.stocks_to_check[stock]['timestamps'][-1]):
@@ -106,7 +107,7 @@ class ZoneRecoveryBot:
 
     def check_and_execute_trades(self, stock, current_price):
         """Check if a trade should be executed based on current price and profit conditions."""
-        result = self.logic.update_price(stock, current_price)
+        result = self.logic.calculate_rsi_and_check_profit(self.stocks_to_check[stock], stock, current_price)
         if result:
             trade_type, price = result
             if trade_type == "CLOSE_ALL":
@@ -167,9 +168,9 @@ class ZoneRecoveryBot:
             # Monitor the order status
             order_status = self.monitor_alpaca_order(order)
             if order_status == OrderStatus.FILLED:
-                self.handle_filled_order(order)
+                self.handle_filled_order(order, True)
             elif order_status == OrderStatus.REJECTED:
-                self.handle_rejected_order(order)
+                self.handle_rejected_order(order, True)
         else:
             # Use IB for short trades
             self.ib_client.reqIds(-1)  # Request a new order ID
@@ -184,9 +185,9 @@ class ZoneRecoveryBot:
             # Monitor the order status
             order_status = self.monitor_ib_order(order_id)
             if order_status == 'Filled':
-                self.handle_filled_order(order)
+                self.handle_filled_order(order, False)
             elif order_status == 'Rejected':
-                self.handle_rejected_order(order)
+                self.handle_rejected_order(order, False)
 
             self.ib_client.nextValidOrderId += 1
 
