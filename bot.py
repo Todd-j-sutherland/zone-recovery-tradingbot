@@ -24,7 +24,8 @@ class IBClient(EWrapper, EClient):
         EClient.__init__(self, self)
         self.client_id = client_id
         self.nextValidOrderId = None
-        self.order_statuses = {}  # Dictionary to track order statuses
+        self.order_statuses = {}
+        self.orders_filled = threading.Event()
 
     def nextValidId(self, orderId):
         self.nextValidOrderId = orderId
@@ -37,7 +38,8 @@ class IBClient(EWrapper, EClient):
             "remaining": remaining,
             "avgFillPrice": avgFillPrice
         }
-        print(f"Order Status Updated: OrderId={orderId}, Status={status}, Filled={filled}")
+        if status == 'Filled':
+            self.orders_filled.set()  # Signal that the order is filled
 
     def start(self):
         self.connect("127.0.0.1", 4002, clientId=self.client_id)
@@ -54,19 +56,13 @@ class IBClient(EWrapper, EClient):
 
     def waitForOrderFill(self, orderId, timeout=30):
         """ Wait for an order to be filled or until timeout. """
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if orderId in self.order_statuses:
-                status = self.order_statuses[orderId]
-                if status['status'] == 'Filled':
-                    print(f"Order {orderId} fully filled.")
-                    return True
-                elif status['status'] in ['Cancelled', 'Inactive']:
-                    print(f"Order {orderId} is {status['status']}.")
-                    return False
-            time.sleep(1)  # Sleep to reduce CPU usage
-        print(f"Timeout: Order {orderId} not filled in {timeout} seconds.")
-        return False
+        is_filled = self.orders_filled.wait(timeout)
+        if is_filled and self.order_statuses[orderId]['status'] == 'Filled':
+            print(f"Order {orderId} fully filled.")
+            return True
+        else:
+            print(f"Order {orderId} not filled. Status: {self.order_statuses[orderId]['status'] if orderId in self.order_statuses else 'Unknown'}")
+            return False
 
 class ZoneRecoveryBot:
     def __init__(self, tickers, ib_client, alpaca_trading_client, metadata_file='stock_metadata.json'):
