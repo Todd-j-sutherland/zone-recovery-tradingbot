@@ -121,6 +121,7 @@ class ZoneRecoveryBot:
             trade_type, price, profit = result
             if trade_type == "CLOSE_ALL":
                 self.close_all_positions(stock, current_price)
+                self.total_session_profit += profit
             elif trade_type == 'BUY':
                 self.trigger_trade(stock, trade_type, 1, current_price, True)
             elif trade_type == 'SELL':

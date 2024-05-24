@@ -179,14 +179,14 @@ def test_trading_decisions(zone_recovery_bot_sophisticated_trades):
         mock_order.filled_avg_price = avg_fill_price
         zone_recovery_bot_sophisticated_trades.alpaca_trading_client.get_order.return_value = mock_order
         zone_recovery_bot_sophisticated_trades.ib_client.orders_filled.set()
-        if run_idx >= 4:
+        if run_idx >= 10:
             return False
         if run_idx == 1:
             # After one check we should see that we found condition for an overbought AAPL and an oversold GOOGL
             # which gives us inital data and a long and short trade
             assert zone_recovery_bot_sophisticated_trades.stocks_to_check == inital_fetch_expected_data
-        # if run_idx == 3:
-            # breakpoint()
+        # if run_idx == 9:
+        #     breakpoint()
             # assert zone_recovery_bot_sophisticated_trades.stocks_to_check == inital_fetch_expected_data
         # breakpoint()  # Pause here in interactive mode, or you could log/output state information
         run_idx += 1
