@@ -1,4 +1,3 @@
-import json
 import os
 import time
 import threading
@@ -35,7 +34,6 @@ class IBClient(EWrapper, EClient):
         self.order_statuses[orderId] = {
             "status": status,
             "filled": filled,
-            "remaining": remaining,
             "avgFillPrice": avgFillPrice
         }
         if status == 'Filled':
@@ -77,23 +75,11 @@ class ZoneRecoveryBot:
         self.total_session_profit = 0
 
     def load_and_update_metadata(self, tickers):
-        if os.path.exists(self.metadata_file):
-            try:
-                with open(self.metadata_file, 'r') as file:
-                    stocks_data = json.load(file)
-            except json.JSONDecodeError:
-                logging.error("JSON file is empty or corrupt. Initializing with an empty dictionary.")
-                stocks_data = {}
-        else:
-            stocks_data = {}
+        stocks_data = {}
         scanned_stocks = [candidates for candidates, _ in self.market_data_service.get_potential_candidates()]
         combined_tickers = tickers + [stock for stock in scanned_stocks if stock not in tickers]
         updated_stocks_data = {ticker: stocks_data.get(ticker, {"fetched": False, "prices": [], "volumes": [], "long": [], "short": []}) for ticker in combined_tickers}
         return updated_stocks_data
-
-    def save_metadata(self, stocks_data):
-        with open(self.metadata_file, 'w') as file:
-            json.dump(stocks_data, file, indent=4)
 
     def start(self):
         self.ib_client.start()
@@ -135,23 +121,31 @@ class ZoneRecoveryBot:
             trade_type, price, profit = result
             if trade_type == "CLOSE_ALL":
                 self.close_all_positions(stock, current_price)
-            else:
-                self.trigger_trade(stock, trade_type, 1, current_price)
+            elif trade_type == 'BUY':
+                self.trigger_trade(stock, trade_type, 1, current_price, True)
+            elif trade_type == 'SELL':
+                self.trigger_trade(stock, trade_type, 1, current_price, False) 
 
     def close_all_positions(self, stock, current_price):
         """Close all positions for the given stock symbol."""
-        for _ in self.logic.positions[stock]['long']:
-            self.trigger_trade(stock, "SELL", 1, current_price, alpaca=True)
+        if self.stocks_to_check[stock]['long']:
+            total_qty = sum([i['qty'] for i in self.stocks_to_check[stock]['long']])
+            self.trigger_trade(stock, "SELL", total_qty, current_price, alpaca=True)
 
-        for _ in self.logic.positions[stock]['short']:
-            self.trigger_trade(stock, "BUY", 1, current_price, alpaca=False)
+        elif self.stocks_to_check[stock]['short']:
+            total_qty = sum([i['qty'] for i in self.stocks_to_check[stock]['short']])
+            self.trigger_trade(stock, "BUY", total_qty, current_price, alpaca=False)
+        else:
+            return
 
-        # Reset historical data for the stock when position is closed
-        self.stocks_to_check[stock]["prices"] = []
-        self.stocks_to_check[stock]["timestamps"] = []
-        self.stocks_to_check[stock]["volumes"] = []
-        self.stocks_to_check[stock]["long"] = []
-        self.stocks_to_check[stock]["short"] = []
+        self.reset_stock_data(stock)
+
+    def reset_stock_data(self, stock):
+        """Reset historical and positional data for a stock."""
+        fields = ['prices', 'timestamps', 'volumes', 'long', 'short']
+        for field in fields:
+            self.stocks_to_check[stock][field] = []
+        self.stocks_to_check[stock]['fetched'] = False
 
     def trigger_trade(self, symbol, trade_type, quantity, current_price, alpaca=False):
         """Trigger a trade with the specified parameters."""
@@ -170,7 +164,7 @@ class ZoneRecoveryBot:
             )
             order = self.alpaca_trading_client.submit_order(order_data)
             # Check order status and handle accordingly
-            self.monitor_alpaca_order(order)
+            self.monitor_alpaca_order(order, symbol)
         else:
             self.ib_client.reqIds(-1)  # Request a new order ID
             while self.ib_client.nextValidOrderId is None:
@@ -180,19 +174,18 @@ class ZoneRecoveryBot:
             order = self.create_order(trade_type, quantity, current_price)
             self.ib_client.placeOrder(order_id, contract, order)
             # Monitoring and handling of the order status after placing the order
-            self.monitor_ib_order(order_id)
+            self.monitor_ib_order(order_id, symbol)
 
-    def monitor_ib_order(self, order_id):
+    def monitor_ib_order(self, order_id, symbol):
         """Monitor IB order and handle its execution status."""
         filled = self.ib_client.waitForOrderFill(order_id)
         if filled:
             order_details = self.ib_client.order_statuses.get(order_id, {})
-            self.handle_filled_order(order_details, False)
+            self.handle_filled_order(order_details, False, symbol)
         else:
-            order_details = self.ib_client.order_statuses.get(order_id, {})
-            self.handle_rejected_order(order_details, False)
+            logging.info(f"Order for {symbol} was rejected")
 
-    def monitor_alpaca_order(self, order):
+    def monitor_alpaca_order(self, order, symbol):
         """Monitor the Alpaca order status."""
         try:
             # Poll the order status until it is finalized ('filled', 'rejected', or 'canceled')
@@ -200,45 +193,28 @@ class ZoneRecoveryBot:
                 updated_order = self.alpaca_trading_client.get_order(order.id)
                 if updated_order.status in [OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELED]:
                     if updated_order.status == OrderStatus.FILLED:
-                        self.handle_filled_order(updated_order, True)
+                        self.handle_filled_order(updated_order, True, symbol)
                     else:
-                        self.handle_rejected_order(updated_order, True)
+                        logging.info(f"Order for {symbol} was rejected")
                     break  # Exit the loop once the order is finalized
                 time.sleep(1)  # Sleep to prevent excessive API calls
         except Exception as e:
             logging.error(f"Error monitoring Alpaca order: {e}")
 
-    def handle_filled_order(self, order, alpaca):
+    def handle_filled_order(self, order, alpaca, symbol):
         """Handle filled orders."""
         if alpaca:
             # Accessing Alpaca order object attributes directly
-            symbol = order.symbol
             price = order.filled_avg_price if order.filled_avg_price else order.limit_price
             qty = order.filled_qty
             logging.info(f"Order for {symbol} filled at {price} with quantity {qty}")
             self.stocks_to_check[symbol]["long"].append({"price": price, "qty": qty})
         else:
             # Assuming 'order' is a dictionary with keys for IB orders
-            symbol = order.get('symbol')
             price = order.get('avgFillPrice')
             qty = order.get('filled')
             logging.info(f"Order for {symbol} filled at {price}")
             self.stocks_to_check[symbol]["short"].append({"price": price, "qty": qty})
-
-        self.save_metadata(self.stocks_to_check)
-
-    def handle_rejected_order(self, order, alpaca):
-        """Handle rejected orders."""
-        if alpaca:
-            # Accessing Alpaca order object attributes directly
-            symbol = order.symbol
-            logging.info(f"Order for {symbol} was rejected")
-        else:
-            # Assuming 'order' is a dictionary with keys for IB orders
-            symbol = order.get('symbol')
-            logging.info(f"Order for {symbol} was rejected")
-        # Additional handling logic can be implemented here
-
 
     def create_contract(self, symbol):
         contract = Contract()

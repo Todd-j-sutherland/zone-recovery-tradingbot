@@ -5,6 +5,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import pytest
 from unittest.mock import call, patch, MagicMock
 from bot import IBClient, ZoneRecoveryBot
+from alpaca.trading.enums import OrderStatus
 
 mock_data = {
     "Time Series (Daily)": {
@@ -76,6 +77,10 @@ def test_stop(ib_client):
     ib_client.stop()
     ib_client.disconnect_mock.assert_called_once()
 
+class MockOrder:
+    status=OrderStatus.FILLED
+    filled_avg_price=None
+    filled_qty=1
 
 @pytest.fixture
 def mock_alpaca_client():
@@ -158,19 +163,30 @@ def zone_recovery_bot_sophisticated_trades(ib_client, mock_alpaca_client, mocker
 
     return ZoneRecoveryBot(['AAPL', 'GOOGL'], ib_client, mock_alpaca_client)
 
-inital_fetch_expected_data = {'AAPL': {'fetched': True, 'prices': [102.0, 104.0, 106.0, 108.0, 110.0, 112.0, 114.0, 116.0, 118.0, 120.0, 122.0, 124.0, 126.0, 130.0], 'volumes': [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000], 'long': [], 'short': [{'price': 130.0, 'qty': 1}], 'timestamps': ['2021-01-02', '2021-01-03', '2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08', '2021-01-09', '2021-01-10', '2021-01-11', '2021-01-12', '2021-01-13', '2021-01-14', '2021-01-15 09:00:00']}, 'GOOGL': {'fetched': False, 'prices': [], 'volumes': [], 'long': [], 'short': []}}
+inital_fetch_expected_data = {'AAPL': {'fetched': True, 'prices': [102.0, 104.0, 106.0, 108.0, 110.0, 112.0, 114.0, 116.0, 118.0, 120.0, 122.0, 124.0, 126.0, 130.0], 'volumes': [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000], 'long': [], 'short': [{'price': 130, 'qty': 1}], 'timestamps': ['2021-01-02', '2021-01-03', '2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08', '2021-01-09', '2021-01-10', '2021-01-11', '2021-01-12', '2021-01-13', '2021-01-14', '2021-01-15 09:00:00']}, 'GOOGL': {'fetched': True, 'prices': [198.0, 196.0, 194.0, 192.0, 190.0, 188.0, 186.0, 184.0, 182.0, 180.0, 178.0, 176.0, 174.0, 130.0], 'volumes': [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000], 'long': [{'price': 130, 'qty': 1}], 'short': [], 'timestamps': ['2021-01-02', '2021-01-03', '2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08', '2021-01-09', '2021-01-10', '2021-01-11', '2021-01-12', '2021-01-13', '2021-01-14', '2021-01-15 09:00:00']}}
 def test_trading_decisions(zone_recovery_bot_sophisticated_trades):
+    zone_recovery_bot_sophisticated_trades.ib_client.order_statuses = {}
     run_idx = 0
     def run_checker():
         nonlocal run_idx
-        print("Checking run condition...")  # Optional: for debugging output
+        avg_fill_price = 130 + run_idx
+        zone_recovery_bot_sophisticated_trades.ib_client.order_statuses[100 + run_idx + 1] = {
+                "status": 'Filled',
+                "filled": 1,
+                "avgFillPrice": avg_fill_price
+            }
+        mock_order = MockOrder()
+        mock_order.filled_avg_price = avg_fill_price
+        zone_recovery_bot_sophisticated_trades.alpaca_trading_client.get_order.return_value = mock_order
+        zone_recovery_bot_sophisticated_trades.ib_client.orders_filled.set()
         if run_idx >= 4:
             return False
         if run_idx == 1:
-            # breakpoint()
+            # After one check we should see that we found condition for an overbought AAPL and an oversold GOOGL
+            # which gives us inital data and a long and short trade
             assert zone_recovery_bot_sophisticated_trades.stocks_to_check == inital_fetch_expected_data
-        if run_idx == 3:
-            breakpoint()
+        # if run_idx == 3:
+            # breakpoint()
             # assert zone_recovery_bot_sophisticated_trades.stocks_to_check == inital_fetch_expected_data
         # breakpoint()  # Pause here in interactive mode, or you could log/output state information
         run_idx += 1
