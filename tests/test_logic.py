@@ -55,7 +55,7 @@ def test_calculate_rsi_and_check_profit_closes_all(setup_zone_recovery_logic):
 
     result = setup_zone_recovery_logic.calculate_rsi_and_check_profit(stock_data, "DUO", 4.0)
     assert result == ('CLOSE_ALL', 4.0, 100.0)
-    assert stock_data == {"long": [], "short": [], "prices": [1, 1, 1, 1, 1]}
+    assert stock_data == {"long": [{"price": 1.0, "qty": 10}], "short": [{"price": 3.0, "qty": 5}], "prices": [1, 1, 1, 1, 1]}
 
 def test_calculate_rsi_and_check_profit_triggers_buy(setup_zone_recovery_logic):
     stock_data = {

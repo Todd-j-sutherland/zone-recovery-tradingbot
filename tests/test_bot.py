@@ -3,9 +3,11 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import pytest
-from unittest.mock import call, patch, MagicMock
+from unittest.mock import call, patch, MagicMock, ANY
 from bot import IBClient, ZoneRecoveryBot
 from alpaca.trading.enums import OrderStatus
+from ibapi.contract import Contract
+from ibapi.order import Order
 
 mock_data = {
     "Time Series (Daily)": {
@@ -32,6 +34,42 @@ mock_data = {
     ]
 }
 
+def matches_expected_call(calls, symbol, qty, limit_price):
+    for call in calls:
+        if call[0] == 'submit_order':
+            order_details = call[1][0]  # Assuming the order details are the first argument
+            # Access attributes directly for custom object
+            if (order_details.symbol == symbol and
+                order_details.qty == qty and
+                order_details.limit_price == limit_price):
+                return True
+    return False
+
+def parse_order_details(order):
+    # This function now assumes `order` is an Order object with attributes like qty, price, and action
+    return {
+        'qty': order.totalQuantity,
+        'price': order.lmtPrice,
+        'action': order.action  # This should be 'BUY' or 'SELL'
+    }
+
+def parse_contract_details(contract):
+    # This function assumes `contract` is a Contract object with attributes like symbol
+    return {
+        'symbol': contract.symbol
+    }
+
+def matches_expected_ib_call(calls, symbol, qty, price):
+    for call in calls:
+        if len(call.args) > 1 and isinstance(call.args[1], Contract) and isinstance(call.args[2], Order):
+            contract_details = parse_contract_details(call.args[1])
+            order_details = parse_order_details(call.args[2])
+            if (contract_details['symbol'] == symbol and
+                order_details['qty'] == qty and
+                order_details['price'] == price and
+                order_details['action'] == 'BUY'):
+                return True
+    return False
 
 @pytest.fixture
 def ib_client(mocker):
@@ -185,10 +223,29 @@ def test_trading_decisions(zone_recovery_bot_sophisticated_trades):
             # After one check we should see that we found condition for an overbought AAPL and an oversold GOOGL
             # which gives us inital data and a long and short trade
             assert zone_recovery_bot_sophisticated_trades.stocks_to_check == inital_fetch_expected_data
-        # if run_idx == 9:
-        #     breakpoint()
-            # assert zone_recovery_bot_sophisticated_trades.stocks_to_check == inital_fetch_expected_data
-        # breakpoint()  # Pause here in interactive mode, or you could log/output state information
+        if run_idx == 2:
+            # After two iterations, we will have established our entry point and made two trades, Apple detected a overbought opportunity but the stock kept on rising
+            # hence a short position was opnened to hedge against it.
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['short'] ==  [{'price': 130, 'qty': 1}]
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['long'] ==  [{'price': 131, 'qty': 1}]
+            # Apple detected a oversold opportunity and corectly opened two long postions as the RSI indicated this trend.
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['GOOGL']['short'] == []
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['GOOGL']['long'] == [{'price': 130, 'qty': 1}, {'price': 131, 'qty': 1}]
+        if run_idx == 6:
+            # The bot identified a profit and closed the positions
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['GOOGL']['short'] == []
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['GOOGL']['long'] == []
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['short'] == []
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['long'] == []
+            # check that we took sold the long positions
+            mock_calls = zone_recovery_bot_sophisticated_trades.alpaca_trading_client.mock_calls
+            assert matches_expected_call(mock_calls, 'GOOGL', 5.0, 135.0)
+            assert matches_expected_call(mock_calls, 'AAPL', 4.0, 135.0)
+            # check that we also cleared out the short position that we took out on the ib client
+            # breakpoint()
+            mock_calls = zone_recovery_bot_sophisticated_trades.ib_client.place_order_mock.mock_calls
+            assert matches_expected_ib_call(mock_calls, 'AAPL', 1.0, 135.0)
+            assert zone_recovery_bot_sophisticated_trades.total_session_profit == 3.0303030303030303
         run_idx += 1
         return True
     

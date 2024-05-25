@@ -129,16 +129,14 @@ class ZoneRecoveryBot:
 
     def close_all_positions(self, stock, current_price):
         """Close all positions for the given stock symbol."""
-        if self.stocks_to_check[stock]['long']:
-            total_qty = sum([i['qty'] for i in self.stocks_to_check[stock]['long']])
-            self.trigger_trade(stock, "SELL", total_qty, current_price, alpaca=True)
+        # Close positions if they exist in 'long' or 'short' states
+        for position_type in ['long', 'short']:
+            if self.stocks_to_check[stock][position_type]:
+                total_qty = sum(item['qty'] for item in self.stocks_to_check[stock][position_type])
+                order_type = "SELL" if position_type == 'long' else "BUY"
+                self.trigger_trade(stock, order_type, total_qty, current_price, alpaca=position_type == 'long')
 
-        elif self.stocks_to_check[stock]['short']:
-            total_qty = sum([i['qty'] for i in self.stocks_to_check[stock]['short']])
-            self.trigger_trade(stock, "BUY", total_qty, current_price, alpaca=False)
-        else:
-            return
-
+        # Reset stock data after closing positions
         self.reset_stock_data(stock)
 
     def reset_stock_data(self, stock):
