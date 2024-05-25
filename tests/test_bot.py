@@ -105,12 +105,6 @@ def ib_client(mocker):
 
     return client
 
-def test_start(ib_client):
-    # Test the start method by simulating a connection
-    with patch('threading.Thread.start', return_value=None):
-        ib_client.start()
-        ib_client.connect_mock.assert_called_once_with("127.0.0.1", 4002, clientId=1)
-
 def test_stop(ib_client):
     # Test the stop method to ensure it properly calls disconnect
     ib_client.stop()
@@ -133,8 +127,10 @@ def zone_recovery_bot(ib_client, mock_alpaca_client, mocker):
         json=MagicMock(return_value=mock_data),
         raise_for_status=MagicMock()
     ))
+    bot = ZoneRecoveryBot(['AAPL', 'GOOGL'], ib_client, mock_alpaca_client)
+    bot.logic.rsi_period = 3
 
-    return ZoneRecoveryBot(['AAPL', 'GOOGL'], ib_client, mock_alpaca_client)
+    return bot
 
 def test_start(zone_recovery_bot):
     # This Test starts and checks if we have enough inital data, If we don't we just keep 
@@ -146,15 +142,22 @@ def test_start(zone_recovery_bot):
         assert mock_sleep.mock_calls == [call(60)]
         assert zone_recovery_bot.stocks_to_check == {
             'AAPL': {
-                'fetched': False, 'prices': [130.0, 135.0, 140.0],
-                'volumes': [1000, 1050, 1100], 'long': [], 'short': [],
-                'timestamps': ['2021-01-01', '2021-01-02', '2021-01-03']
-                }, 
+                'fetched': True,
+                'prices': [135.0, 140.0, 132.0],
+                'volumes': [1050, 1100, 1200],
+                'long': [], 'short': [],
+                'timestamps': ['2021-01-02', '2021-01-03', '2021-01-01 09:32:00'],
+                'previous_rsi': 29.411764705882362
+            }, 
             'GOOGL': {
-                'fetched': False, 'prices': [130.0, 135.0, 140.0], 
-                'volumes': [1000, 1050, 1100], 'long': [], 'short': [], 
-                'timestamps': ['2021-01-01', '2021-01-02', '2021-01-03']}
+                'fetched': True,
+                'prices': [135.0, 140.0, 132.0],
+                'volumes': [1050, 1100, 1200],
+                'long': [], 'short': [],
+                'timestamps': ['2021-01-02', '2021-01-03', '2021-01-01 09:32:00'],
+                'previous_rsi': 29.411764705882362
             }
+        }
 
 def generate_trend_data():
     # Generate data for 14 trading days
@@ -202,7 +205,7 @@ def zone_recovery_bot_sophisticated_trades(ib_client, mock_alpaca_client, mocker
 
     return ZoneRecoveryBot(['AAPL', 'GOOGL'], ib_client, mock_alpaca_client)
 
-inital_fetch_expected_data = {'AAPL': {'fetched': True, 'prices': [102.0, 104.0, 106.0, 108.0, 110.0, 112.0, 114.0, 116.0, 118.0, 120.0, 122.0, 124.0, 126.0, 130.0], 'volumes': [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000], 'long': [], 'short': [{'price': 130, 'qty': 1}], 'timestamps': ['2021-01-02', '2021-01-03', '2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08', '2021-01-09', '2021-01-10', '2021-01-11', '2021-01-12', '2021-01-13', '2021-01-14', '2021-01-15 09:00:00']}, 'GOOGL': {'fetched': True, 'prices': [198.0, 196.0, 194.0, 192.0, 190.0, 188.0, 186.0, 184.0, 182.0, 180.0, 178.0, 176.0, 174.0, 130.0], 'volumes': [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000], 'long': [{'price': 130, 'qty': 1}], 'short': [], 'timestamps': ['2021-01-02', '2021-01-03', '2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08', '2021-01-09', '2021-01-10', '2021-01-11', '2021-01-12', '2021-01-13', '2021-01-14', '2021-01-15 09:00:00']}}
+inital_fetch_expected_data = {'AAPL': {'fetched': True, 'prices': [102.0, 104.0, 106.0, 108.0, 110.0, 112.0, 114.0, 116.0, 118.0, 120.0, 122.0, 124.0, 126.0, 130.0], 'volumes': [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000], 'long': [], 'short': [], 'timestamps': ['2021-01-02', '2021-01-03', '2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08', '2021-01-09', '2021-01-10', '2021-01-11', '2021-01-12', '2021-01-13', '2021-01-14', '2021-01-15 09:00:00'], 'previous_rsi': 100.0}, 'GOOGL': {'fetched': True, 'prices': [198.0, 196.0, 194.0, 192.0, 190.0, 188.0, 186.0, 184.0, 182.0, 180.0, 178.0, 176.0, 174.0, 130.0], 'volumes': [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000], 'long': [], 'short': [], 'timestamps': ['2021-01-02', '2021-01-03', '2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08', '2021-01-09', '2021-01-10', '2021-01-11', '2021-01-12', '2021-01-13', '2021-01-14', '2021-01-15 09:00:00'], 'previous_rsi': 0.0}}
 def test_trading_decisions(zone_recovery_bot_sophisticated_trades):
     zone_recovery_bot_sophisticated_trades.ib_client.order_statuses = {}
     run_idx = 0
@@ -227,26 +230,22 @@ def test_trading_decisions(zone_recovery_bot_sophisticated_trades):
         if run_idx == 2:
             # After two iterations, we will have established our entry point and made two trades, Apple detected a overbought opportunity but the stock kept on rising
             # hence a short position was opnened to hedge against it.
-            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['short'] ==  [{'price': 130, 'qty': 1}]
-            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['long'] ==  [{'price': 131, 'qty': 1}]
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['short'] ==  []
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['long'] ==  []
             # Apple detected a oversold opportunity and corectly opened two long postions as the RSI indicated this trend.
             assert zone_recovery_bot_sophisticated_trades.stocks_to_check['GOOGL']['short'] == []
-            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['GOOGL']['long'] == [{'price': 130, 'qty': 1}, {'price': 131, 'qty': 1}]
-        if run_idx == 6:
-            # The bot identified a profit and closed the positions
+            assert zone_recovery_bot_sophisticated_trades.stocks_to_check['GOOGL']['long'] == [{'price': 131, 'qty': 1}]
+        if run_idx == 7:
+            # The bot reached the maximum trades for this stock and closed the positions
             assert zone_recovery_bot_sophisticated_trades.stocks_to_check['GOOGL']['short'] == []
             assert zone_recovery_bot_sophisticated_trades.stocks_to_check['GOOGL']['long'] == []
             assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['short'] == []
             assert zone_recovery_bot_sophisticated_trades.stocks_to_check['AAPL']['long'] == []
             # check that we took sold the long positions
             mock_calls = zone_recovery_bot_sophisticated_trades.alpaca_trading_client.mock_calls
-            assert matches_expected_call(mock_calls, 'GOOGL', 5.0, 135.0)
-            assert matches_expected_call(mock_calls, 'AAPL', 4.0, 135.0)
+            assert matches_expected_call(mock_calls, 'GOOGL', 5.0, 136.0)
             # check that we also cleared out the short position that we took out on the ib client
-            # breakpoint()
-            mock_calls = zone_recovery_bot_sophisticated_trades.ib_client.place_order_mock.mock_calls
-            assert matches_expected_ib_call(mock_calls, 'AAPL', 1.0, 135.0)
-            assert zone_recovery_bot_sophisticated_trades.total_session_profit == 3.0303030303030303
+            assert zone_recovery_bot_sophisticated_trades.total_session_profit == 2.2556390977443606
         run_idx += 1
         return True
     

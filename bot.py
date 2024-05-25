@@ -11,6 +11,7 @@ from alpaca.trading import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderStatus
 from get_market_data import GetMarketData
+from utils import calculate_rsi
 from zone_recovery_logic import ZoneRecoveryLogic
 from dotenv import load_dotenv
 
@@ -95,6 +96,7 @@ class ZoneRecoveryBot:
                         self.stocks_to_check[stock]["timestamps"] = [time for _, time in initial_data]
                         self.stocks_to_check[stock]["volumes"].extend(volumes)
                         self.stocks_to_check[stock]["fetched"] = True
+                        self.stocks_to_check[stock]["previous_rsi"] = calculate_rsi(self.stocks_to_check[stock]["prices"], self.logic.rsi_period)
                     if len(self.stocks_to_check[stock]["prices"]) >= self.logic.rsi_period:
                         price, timestamp, volume = self.market_data_service.fetch_latest_price(stock, "1Min")
                         if price and (not self.stocks_to_check[stock]['timestamps'] or timestamp != self.stocks_to_check[stock]['timestamps'][-1]):
@@ -120,12 +122,12 @@ class ZoneRecoveryBot:
         if result:
             trade_type, price, profit = result
             if trade_type == "CLOSE_ALL":
-                self.close_all_positions(stock, current_price)
+                self.close_all_positions(stock, price)
                 self.total_session_profit += profit
             elif trade_type == 'BUY':
-                self.trigger_trade(stock, trade_type, 1, current_price, True)
+                self.trigger_trade(stock, trade_type, 1, price, True)
             elif trade_type == 'SELL':
-                self.trigger_trade(stock, trade_type, 1, current_price, False) 
+                self.trigger_trade(stock, trade_type, 1, price, False) 
 
     def close_all_positions(self, stock, current_price):
         """Close all positions for the given stock symbol."""
