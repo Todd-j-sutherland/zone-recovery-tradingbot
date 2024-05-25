@@ -5,7 +5,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import pytest
 from unittest.mock import call, patch, MagicMock, ANY
 from bot import IBClient, ZoneRecoveryBot
-from alpaca.trading.enums import OrderStatus
+from alpaca.trading.enums import OrderStatus, OrderSide
 from ibapi.contract import Contract
 from ibapi.order import Order
 
@@ -34,14 +34,15 @@ mock_data = {
     ]
 }
 
-def matches_expected_call(calls, symbol, qty, limit_price):
+def matches_expected_call(calls, symbol, qty, limit_price, trade_type='SELL'):
     for call in calls:
         if call[0] == 'submit_order':
             order_details = call[1][0]  # Assuming the order details are the first argument
             # Access attributes directly for custom object
             if (order_details.symbol == symbol and
                 order_details.qty == qty and
-                order_details.limit_price == limit_price):
+                order_details.limit_price == limit_price and
+                order_details.side == (OrderSide.BUY if trade_type == "BUY" else OrderSide.SELL)):
                 return True
     return False
 
@@ -59,7 +60,7 @@ def parse_contract_details(contract):
         'symbol': contract.symbol
     }
 
-def matches_expected_ib_call(calls, symbol, qty, price):
+def matches_expected_ib_call(calls, symbol, qty, price, trade_type='BUY'):
     for call in calls:
         if len(call.args) > 1 and isinstance(call.args[1], Contract) and isinstance(call.args[2], Order):
             contract_details = parse_contract_details(call.args[1])
@@ -67,7 +68,7 @@ def matches_expected_ib_call(calls, symbol, qty, price):
             if (contract_details['symbol'] == symbol and
                 order_details['qty'] == qty and
                 order_details['price'] == price and
-                order_details['action'] == 'BUY'):
+                order_details['action'] == trade_type):
                 return True
     return False
 
