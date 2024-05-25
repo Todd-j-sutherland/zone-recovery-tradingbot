@@ -33,7 +33,7 @@ def run_simulation(days=250, initial_price=100):
     return results
 
 # Run the simulation 100 times and calculate the average profit
-num_runs = 100
+num_runs = 1000
 all_profits = []
 for _ in range(num_runs):
     profits = run_simulation()
