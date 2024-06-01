@@ -119,7 +119,7 @@ class MockOrder:
 def mock_alpaca_client():
     submit_order_mock = MagicMock()
     get_order_mock = MagicMock()
-    return MagicMock(submit_order=submit_order_mock, get_order=get_order_mock)
+    return MagicMock(submit_order=submit_order_mock, get_order_by_id=get_order_mock)
 
 @pytest.fixture
 def zone_recovery_bot(ib_client, mock_alpaca_client, mocker):
@@ -219,7 +219,7 @@ def test_trading_decisions(zone_recovery_bot_sophisticated_trades):
             }
         mock_order = MockOrder()
         mock_order.filled_avg_price = avg_fill_price
-        zone_recovery_bot_sophisticated_trades.alpaca_trading_client.get_order.return_value = mock_order
+        zone_recovery_bot_sophisticated_trades.alpaca_trading_client.get_order_by_id.return_value = mock_order
         zone_recovery_bot_sophisticated_trades.ib_client.orders_filled.set()
         if run_idx >= 10:
             return False

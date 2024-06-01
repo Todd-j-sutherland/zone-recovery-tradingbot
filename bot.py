@@ -98,7 +98,7 @@ class ZoneRecoveryBot:
                         self.stocks_to_check[stock]["fetched"] = True
                         self.stocks_to_check[stock]["previous_rsi"] = calculate_rsi(self.stocks_to_check[stock]["prices"], self.logic.rsi_period)
                     if len(self.stocks_to_check[stock]["prices"]) >= self.logic.rsi_period:
-                        price, timestamp, volume = self.market_data_service.fetch_latest_price(stock, "1Min")
+                        price, timestamp, volume = self.market_data_service.fetch_latest_price(stock, "1min")
                         if price and (not self.stocks_to_check[stock]['timestamps'] or timestamp != self.stocks_to_check[stock]['timestamps'][-1]):
                             self.stocks_to_check[stock]['prices'].append(price)
                             self.stocks_to_check[stock]['timestamps'].append(timestamp)
@@ -150,6 +150,7 @@ class ZoneRecoveryBot:
 
     def trigger_trade(self, symbol, trade_type, quantity, current_price, alpaca=False):
         """Trigger a trade with the specified parameters."""
+        symbol = symbol.upper()
         if alpaca:
             order_data = MarketOrderRequest(
                 symbol=symbol,
@@ -191,7 +192,7 @@ class ZoneRecoveryBot:
         try:
             # Poll the order status until it is finalized ('filled', 'rejected', or 'canceled')
             while True:
-                updated_order = self.alpaca_trading_client.get_order(order.id)
+                updated_order = self.alpaca_trading_client.get_order_by_id(order.id)
                 if updated_order.status in [OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELED]:
                     if updated_order.status == OrderStatus.FILLED:
                         self.handle_filled_order(updated_order, True, symbol)
