@@ -1,12 +1,8 @@
 import os
 import time
-import threading
+from ib_insync import IB, Stock, MarketOrder, LimitOrder
 import logging
 import argparse
-from ibapi.client import EClient
-from ibapi.wrapper import EWrapper
-from ibapi.contract import Contract
-from ibapi.order import Order
 from alpaca.trading import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderStatus
@@ -18,54 +14,89 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+class IBClient:
+    def __init__(self, host='127.0.0.1', port=4002, client_id=123):
+        self.ib = IB()
+        self.ib.connect(host, port, clientId=client_id)
 
-class IBClient(EWrapper, EClient):
-    def __init__(self, client_id):
-        EClient.__init__(self, self)
-        self.client_id = client_id
-        self.nextValidOrderId = None
-        self.order_statuses = {}
-        self.orders_filled = threading.Event()
+    def verify_contract(self, contract):
+        logging.info(f"Verifying contract for symbol: {contract.symbol}, exchange: {contract.exchange}, currency: {contract.currency}")
+        contract_details = self.ib.reqContractDetails(contract)
+        if not contract_details:
+            logging.error(f"No contract details found for {contract.symbol} on {contract.exchange}")
+            return None
+        logging.info(f"Contract details found: {contract_details[0].contract}")
+        return contract_details[0].contract
 
-    def nextValidId(self, orderId):
-        self.nextValidOrderId = orderId
+    def find_correct_exchange(self, symbol, exchanges=['SMART', 'NASDAQ', 'NYSE', 'AMEX']):
+        for exchange in exchanges:
+            contract = Stock(symbol, exchange, 'USD')
+            verified_contract = self.verify_contract(contract)
+            if verified_contract:
+                logging.info(f"Found valid contract for {symbol} on {exchange}")
+                return verified_contract
+        logging.error(f"No valid contract found for {symbol} on any exchange.")
+        return None
 
-    def orderStatus(self, orderId, status, filled, remaining, avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice):
-        super().orderStatus(orderId, status, filled, remaining, avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice)
-        self.order_statuses[orderId] = {
-            "status": status,
-            "filled": filled,
-            "avgFillPrice": avgFillPrice
-        }
-        if status == 'Filled':
-            self.orders_filled.set()  # Signal that the order is filled
+    def place_order(self, symbol, quantity, limit_price, action, is_market):
+        contract = self.find_correct_exchange(symbol)
+        if contract is None:
+            return None
+        
+        order = MarketOrder(action, quantity) if is_market else LimitOrder(action, quantity, limit_price)
+        trade = self.ib.placeOrder(contract, order)
+        return trade
 
-    def start(self):
-        self.connect("127.0.0.1", 4002, clientId=self.client_id)
-        thread = threading.Thread(target=self.run)
-        thread.start()
-        self.waitForConnection()
-
-    def waitForConnection(self):
-        while not self.isConnected():
-            time.sleep(1)
+    def monitor_order(self, trade):
+        while not trade.isDone():
+            self.ib.sleep(1)  # Sleeps to prevent excessive updates, respects API limits
+            logging.info(f"Current order status: {trade.orderStatus.status}")
+        logging.info(f'Order done with status {trade.orderStatus.status}')
+        return trade.order
 
     def stop(self):
-        self.disconnect()
+        self.ib.disconnect()
 
-    def waitForOrderFill(self, orderId, timeout=30):
-        """ Wait for an order to be filled or until timeout. """
-        is_filled = self.orders_filled.wait(timeout)
-        if is_filled and self.order_statuses[orderId]['status'] == 'Filled':
-            print(f"Order {orderId} fully filled.")
-            return True
+class AlpacaClient:
+    def __init__(self, is_paper=True):
+        self.api_key = os.getenv('ALPACA_API_KEY')
+        self.secret_key = os.getenv('ALPACA_SECRET_KEY')
+        self.client = TradingClient(self.api_key, self.secret_key, paper=is_paper)
+
+    def place_order(self, symbol, quantity, action, is_market, limit_price=None):
+        side = OrderSide.BUY if action == "BUY" else OrderSide.SELL
+        if is_market:
+            order_data = MarketOrderRequest(
+                symbol=symbol,
+                qty=quantity,
+                side=side,
+                time_in_force=TimeInForce.GTC
+            )
         else:
-            print(f"Order {orderId} not filled. Status: {self.order_statuses[orderId]['status'] if orderId in self.order_statuses else 'Unknown'}")
-            return False
+            order_data = LimitOrderRequest(
+                symbol=symbol,
+                qty=quantity,
+                side=side,
+                limit_price=limit_price,
+                time_in_force=TimeInForce.GTC
+            )
+        order = self.client.submit_order(order_data=order_data)
+        return order
+
+    def monitor_order(self, order):
+        while True:
+            order = self.client.get_order_by_id(order.id)
+            if order.status in [OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELED]:
+                if order.status == OrderStatus.FILLED:
+                    print(f"Order for {order.symbol} filled.")
+                else:
+                    print(f"Order for {order.symbol} was {order.status.lower()}.")
+                break
+            time.sleep(1)
+        return order
 
 class ZoneRecoveryBot:
-    def __init__(self, tickers, ib_client, alpaca_trading_client, metadata_file='stock_metadata.json'):
-        self.metadata_file = metadata_file
+    def __init__(self, tickers, ib_client, alpaca_trading_client):
         self.market_data_service = GetMarketData()
         self.data_update_interval = 60
         self.running = True
@@ -83,10 +114,6 @@ class ZoneRecoveryBot:
         return updated_stocks_data
 
     def start(self):
-        self.ib_client.start()
-        self.fetch_data_periodically()
-
-    def fetch_data_periodically(self):
         while self.running:
             try:
                 for stock, info in self.stocks_to_check.items():
@@ -120,14 +147,14 @@ class ZoneRecoveryBot:
         """Check if a trade should be executed based on current price and profit conditions."""
         result = self.logic.calculate_rsi_and_check_profit(self.stocks_to_check[stock], stock, current_price)
         if result:
-            trade_type, price, profit = result
-            if trade_type == "CLOSE_ALL":
+            action, price, profit = result
+            if action == "CLOSE_ALL":
                 self.close_all_positions(stock, price)
                 self.total_session_profit += profit
-            elif trade_type == 'BUY':
-                self.trigger_trade(stock, trade_type, 1, price, True)
-            elif trade_type == 'SELL':
-                self.trigger_trade(stock, trade_type, 1, price, False) 
+            elif action == 'BUY':
+                self.trigger_trade(stock, action, 1, price, True)
+            elif action == 'SELL':
+                self.trigger_trade(stock, action, 1, price, False) 
 
     def close_all_positions(self, stock, current_price):
         """Close all positions for the given stock symbol."""
@@ -148,60 +175,26 @@ class ZoneRecoveryBot:
             self.stocks_to_check[stock][field] = []
         self.stocks_to_check[stock]['fetched'] = False
 
-    def trigger_trade(self, symbol, trade_type, quantity, current_price, alpaca=False):
+    def trigger_trade(self, symbol, action, quantity, current_price, alpaca=False):
         """Trigger a trade with the specified parameters."""
         symbol = symbol.upper()
         if alpaca:
-            order_data = MarketOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=OrderSide.BUY if trade_type == "BUY" else OrderSide.SELL,
-                time_in_force=TimeInForce.GTC
-            ) if current_price is None else LimitOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=OrderSide.BUY if trade_type == "BUY" else OrderSide.SELL,
-                limit_price=current_price,
-                time_in_force=TimeInForce.GTC
-            )
-            order = self.alpaca_trading_client.submit_order(order_data)
-            # Check order status and handle accordingly
-            self.monitor_alpaca_order(order, symbol)
+            order = self.alpaca_trading_client.place_order(self, symbol, quantity, action, False, limit_price=current_price)
+            order = self.alpaca_trading_client.monitor_order(order)
+            if order.status == OrderStatus.FILLED:
+                self.handle_filled_order(order, True, symbol)
+            else:
+                logging.info(f'Alpaca order was not filled. Status was {order.status}')
         else:
-            self.ib_client.reqIds(-1)  # Request a new order ID
-            while self.ib_client.nextValidOrderId is None:
-                time.sleep(0.1)
-            order_id = self.ib_client.nextValidOrderId
-            contract = self.create_contract(symbol)
-            order = self.create_order(trade_type, quantity, current_price)
-            self.ib_client.placeOrder(order_id, contract, order)
-            # Monitoring and handling of the order status after placing the order
-            self.monitor_ib_order(order_id, symbol)
-
-    def monitor_ib_order(self, order_id, symbol):
-        """Monitor IB order and handle its execution status."""
-        filled = self.ib_client.waitForOrderFill(order_id)
-        if filled:
-            order_details = self.ib_client.order_statuses.get(order_id, {})
-            self.handle_filled_order(order_details, False, symbol)
-        else:
-            logging.info(f"Order for {symbol} was rejected")
-
-    def monitor_alpaca_order(self, order, symbol):
-        """Monitor the Alpaca order status."""
-        try:
-            # Poll the order status until it is finalized ('filled', 'rejected', or 'canceled')
-            while True:
-                updated_order = self.alpaca_trading_client.get_order_by_id(order.id)
-                if updated_order.status in [OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELED]:
-                    if updated_order.status == OrderStatus.FILLED:
-                        self.handle_filled_order(updated_order, True, symbol)
-                    else:
-                        logging.info(f"Order for {symbol} was rejected")
-                    break  # Exit the loop once the order is finalized
-                time.sleep(1)  # Sleep to prevent excessive API calls
-        except Exception as e:
-            logging.error(f"Error monitoring Alpaca order: {e}")
+            trade = self.ib_client.place_order(symbol, quantity, current_price, action, False)
+            if not trade:
+                logging.info(f'Stock {symbol} can\'t be traded, skipping.')
+                return
+            order = self.ib_client.monitor_order(trade)
+            if trade.orderStatus.status == 'Filled':
+                self.handle_filled_order(order, False, symbol)
+            else:
+                logging.info(f'IB Order was not filled. Status was {trade.orderStatus.status}')
 
     def handle_filled_order(self, order, alpaca, symbol):
         """Handle filled orders."""
@@ -215,26 +208,8 @@ class ZoneRecoveryBot:
             # Assuming 'order' is a dictionary with keys for IB orders
             price = order.get('avgFillPrice')
             qty = order.get('filled')
-            logging.info(f"Order for {symbol} filled at {price}")
+            logging.info(f"Order for {symbol} filled at {price} with quantity {qty}")
             self.stocks_to_check[symbol]["short"].append({"price": price, "qty": qty})
-
-    def create_contract(self, symbol):
-        contract = Contract()
-        contract.symbol = symbol
-        contract.secType = "STK"
-        contract.currency = "USD"
-        contract.exchange = "SMART"
-        return contract
-
-    def create_order(self, action, quantity, current_price):
-        order = Order()
-        order.action = action
-        order.orderType = "LMT" if current_price else "MKT"
-        order.totalQuantity = quantity
-        if current_price:
-            order.lmtPrice = current_price
-        order.tif = "GTC"
-        return order
 
     def stop(self):
         self.running = False
