@@ -152,9 +152,9 @@ class ZoneRecoveryBot:
                 self.close_all_positions(stock, price)
                 self.total_session_profit += profit
             elif action == 'BUY':
-                self.trigger_trade(stock, action, 1, price, True)
+                self.trigger_trade(stock, action, 10, price, True)
             elif action == 'SELL':
-                self.trigger_trade(stock, action, 1, price, False) 
+                self.trigger_trade(stock, action, 10, price, False) 
 
     def close_all_positions(self, stock, current_price):
         """Close all positions for the given stock symbol."""

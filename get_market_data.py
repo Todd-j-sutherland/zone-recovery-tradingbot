@@ -40,12 +40,6 @@ class GetMarketData:
             params["entitlement"] = entitlement
         return params
 
-    def fetch_intraday_data(self, symbol, interval="1min", mode="realtime"):
-        """Fetch the latest intraday data."""
-        params = self._get_params("TIME_SERIES_INTRADAY", symbol, interval, "compact", mode)
-        data = self._make_api_request(params)
-        return {time: float(info['4. close']) for time, info in data.get("Time Series (1min)", {}).items()}
-
     def fetch_initial_data(self, symbol, interval="1min", period=30, mode="realtime", series="TIME_SERIES_INTRADAY"):
         """Fetch the initial set of data for RSI calculation including timestamps and volumes."""
         params = self._get_params(series, symbol, interval, "full", mode)
