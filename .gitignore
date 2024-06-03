@@ -4,3 +4,4 @@ ib-example/*
 __pycache__
 .pytest_cache
 stock_metadata.json
+env
